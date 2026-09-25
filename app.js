@@ -8,8 +8,30 @@
   const cfg = window.TASK_TRACKER_CONFIG || {};
   const configured = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY &&
     !/YOUR-/.test(cfg.SUPABASE_URL + cfg.SUPABASE_ANON_KEY));
-  const db = window.__TEST_DB__ ||
-    (configured && window.supabase ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null);
+  let db = window.__TEST_DB__ || null;
+  const makeClient = () => {
+    if (!db && configured && window.supabase && window.supabase.createClient) {
+      db = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+    }
+  };
+  // If the first CDN was blocked/unreachable, try backups before giving up.
+  const LIB_URLS = [
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js',
+    'https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/supabase-js/2.45.4/umd/supabase.min.js'
+  ];
+  async function ensureLibrary() {
+    for (const url of LIB_URLS) {
+      if (window.supabase && window.supabase.createClient) return true;
+      await new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.src = url; s.onload = resolve; s.onerror = resolve;
+        document.head.appendChild(s);
+      });
+    }
+    return !!(window.supabase && window.supabase.createClient);
+  }
+  makeClient();
 
   const state = { user: null, projects: [], tasks: [], running: null };
   const $app = document.getElementById('app');
@@ -538,8 +560,22 @@ TRANSCRIPT:
         h('div', { class: 'form-actions' }, h('button', { type: 'button', class: 'btn', onclick: () => go('up') }, 'Create account'), h('button', { type: 'submit', class: 'btn primary' }, 'Sign in'))));
   }
   function viewSetup() {
+    const yes = (b) => (b ? '✅ yes' : '❌ no');
+    const hasUrl = !!cfg.SUPABASE_URL && !/YOUR-/.test(cfg.SUPABASE_URL);
+    const hasKey = !!cfg.SUPABASE_ANON_KEY && !/YOUR-/.test(cfg.SUPABASE_ANON_KEY);
+    const libOk = !!(window.supabase && window.supabase.createClient);
+    let advice;
+    if (!window.TASK_TRACKER_CONFIG) advice = 'config.js did not load. Check that the file is in the same folder as index.html and named exactly config.js.';
+    else if (!hasUrl || !hasKey) advice = 'config.js still has the placeholder values (or your browser cached the old copy: hard-refresh with Ctrl+Shift+R / Cmd+Shift+R).';
+    else if (!libOk) advice = 'Your settings are fine, but the Supabase library could not be downloaded from any CDN. Check your internet connection and any ad/privacy blockers or firewall, then reload.';
+    else advice = 'Reload the page.';
     return h('div', { class: 'card auth' }, h('h1', null, 'Almost there'),
-      h('p', null, 'Open ', h('code', null, 'config.js'), ' and paste in your Supabase project URL and anon key. Setup steps are in README.md.'));
+      h('p', null, advice),
+      h('ul', { class: 'small' },
+        h('li', null, 'config.js loaded: ', yes(!!window.TASK_TRACKER_CONFIG)),
+        h('li', null, 'Supabase URL set: ', yes(hasUrl)),
+        h('li', null, 'Anon key set: ', yes(hasKey)),
+        h('li', null, 'Supabase library loaded: ', yes(libOk))));
   }
 
   // ---------------------------------------------------------------- router
@@ -578,6 +614,7 @@ TRANSCRIPT:
     document.getElementById('signout').addEventListener('click', () => db && db.auth.signOut());
     document.getElementById('timer-stop').addEventListener('click', () => guard(stopTimer));
     window.addEventListener('hashchange', render);
+    if (!db && configured) { await ensureLibrary(); makeClient(); }
     if (!db) { render(); return; }
     db.auth.onAuthStateChange((_evt, session) => { setTimeout(() => applySession(session), 0); });
     const { data } = await db.auth.getSession();
