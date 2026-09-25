@@ -642,56 +642,115 @@
   }
 
   // ------------------------------------------------ transcript import view
-  const PROMPT = `You are helping me turn a meeting transcript into tasks for my task tracker.
+  const PROMPT = `You are helping me turn a meeting into an actionable to-do list. I am uploading a meeting transcript (and possibly an AI-generated overview). Read the transcript in full — treat it as the source of truth.
 
-Read the transcript at the bottom and extract ONLY action items that someone explicitly committed to or was asked to do. Do not invent tasks. Skip general discussion, background, and decisions that need no follow-up. Merge duplicates.
+This works in three parts. Do Part 1 only. Then stop and wait for my reply.
 
-Return ONLY one JSON object (no commentary, no markdown) in exactly this shape:
+PART 1 — Pull out every task (do this now)
+Scan the transcript and extract every task, action, commitment, or to-do that was discussed. It does not matter who a task was assigned to — assume every task is mine and list them all together.
+Return them as a simple numbered list, one short line per task, each written verb-first and specific enough to act on. No owner names, no categories, no extra commentary — just the clean numbered list.
+Then end with: "Reply with the numbers you'd like me to build out."
+
+PART 2 — Build out the ones I pick (only after I reply)
+Once I reply with the numbers I want, produce the following for each selected task:
+
+Task Outline
+* Task: restate it clearly, verb-first
+* Steps: the concrete steps to complete it, in order
+* Priority: High / Medium / Low
+* Time to complete: a realistic estimate (e.g., 10 min, 1 hr)
+* Depends on / need first: anything or anyone required before I can start (or "nothing")
+
+Follow-Up Email (outline only — do not write the full email)
+If the task needs an email or message, outline it so I can write it in my own words and be sure I cover everything:
+* To: who it goes to
+* Purpose: one line on what the email is meant to accomplish
+* Points to cover: a bullet list of every point I need to hit — context, the ask, deadlines, next steps, anything to confirm
+If a selected task needs no email, just say "No email needed" under it.
+
+PART 3 — Export for my task tracker (in the same reply as Part 2)
+After the task outlines and email outlines, finish with ONE JSON code block covering the same selected tasks, and nothing after it. Use exactly this shape:
+
 {
-  "meeting_title": "short title or null",
-  "meeting_date": "YYYY-MM-DD or null",
+  "meeting_title": "short title, or null",
+  "meeting_date": "YYYY-MM-DD, or null",
   "tasks": [
     {
-      "title": "imperative verb phrase, max 100 characters",
-      "description": "1-3 sentences of needed context, or null",
-      "importance": "critical | high | medium | low",
-      "due_date": "YYYY-MM-DD or null",
-      "owner": "person named as responsible, or null",
-      "context_quote": "short verbatim quote (max 200 chars) that supports this task"
+      "title": "the task restated verb-first",
+      "importance": "high | medium | low",
+      "time_estimate": "e.g. 30 min",
+      "steps": ["step 1", "step 2"],
+      "depends_on": "what is needed first, or null",
+      "email": null,
+      "due_date": null
     }
   ]
 }
 
-Rules:
-- importance is "medium" unless the transcript clearly signals otherwise ("critical" only for blockers, outages, or hard deadlines; "high" for explicitly stressed items; "low" for nice-to-haves).
-- due_date only if a specific date is given or can be resolved from a relative phrase using meeting_date; otherwise null.
-- If there are no action items, return "tasks": [].
-
-TRANSCRIPT:
-<paste transcript here>`;
+Rules for the JSON:
+- importance is the Priority you assigned in Part 2, in lowercase.
+- steps has one string per step, in order.
+- email is null when no email is needed; otherwise {"to": "...", "purpose": "...", "points": ["...", "..."]}.
+- due_date is a YYYY-MM-DD date only if the transcript states one (or it can be worked out from the meeting date); otherwise null.
+- The JSON must be valid: double quotes, no comments, no trailing commas.`;
 
   function parseImport(text) {
-    let s = String(text || '').trim();
-    s = s.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-    const a = s.indexOf('{'), b = s.lastIndexOf('}');
-    if (a < 0 || b < a) throw new Error('No JSON object found. Paste exactly what Claude returned.');
-    let obj;
-    try { obj = JSON.parse(s.slice(a, b + 1)); } catch (e) { throw new Error('That is not valid JSON: ' + e.message); }
-    if (!Array.isArray(obj.tasks)) throw new Error('JSON must contain a "tasks" array.');
-    const dateOk = (d) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : '');
+    const raw = String(text || '');
+    // Prefer fenced JSON blocks (last one first: the export comes at the end of the reply), then any {...} span.
+    const tries = [];
+    const fence = /```(?:json)?\s*([\s\S]*?)```/gi; let m;
+    while ((m = fence.exec(raw))) if (m[1].trim().startsWith('{')) tries.push(m[1].trim());
+    tries.reverse();
+    const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+    if (a >= 0 && b > a) tries.push(raw.slice(a, b + 1));
+    if (!tries.length) throw new Error('No JSON found. Paste Claude’s full reply, or just the JSON block at the end of it.');
+    let obj = null, lastErr = null, sawObject = false;
+    for (const c of tries) {
+      try { const o = JSON.parse(c); sawObject = true; if (o && Array.isArray(o.tasks)) { obj = o; break; } }
+      catch (e) { lastErr = e; }
+    }
+    if (!obj) throw new Error(sawObject ? 'JSON must contain a "tasks" array.' : 'That is not valid JSON: ' + (lastErr && lastErr.message));
+
+    const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : typeof v === 'number' ? String(v) : '');
+    const list = (v, n, len) => (Array.isArray(v) ? v : (typeof v === 'string' && v.trim() ? v.split(/\n+/) : []))
+      .map(x => str(x, len).replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '')).filter(Boolean).slice(0, n);
+    const dateOk = (d) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.trim()) ? d.trim() : '');
+    const none = (s) => (/^(nothing|none|n\/a|no|null|-)\.?$/i.test(s) ? '' : s);
     return {
       title: nul(obj.meeting_title), date: dateOk(obj.meeting_date),
-      tasks: obj.tasks.filter(t => t && nul(t.title)).map(t => ({
-        title: String(t.title).trim().slice(0, 200), description: nul(t.description) || '',
-        importance: ['critical', 'high', 'medium', 'low'].includes(t.importance || t.priority) ? (t.importance || t.priority) : 'medium',
-        due_date: dateOk(t.due_date), owner: nul(t.owner) || '', quote: nul(t.context_quote) || ''
-      }))
+      tasks: obj.tasks.filter(t => t && nul(t.title)).map(t => {
+        const imp = String(t.importance || t.priority || '').toLowerCase().trim();
+        let email = null;
+        if (t.email && typeof t.email === 'object') {
+          const e = { to: str(t.email.to, 200), purpose: str(t.email.purpose, 400), points: list(t.email.points, 30, 500) };
+          if (e.to || e.purpose || e.points.length) email = e;
+        }
+        return {
+          title: str(t.title, 200), description: str(t.description, 2000),
+          importance: ['critical', 'high', 'medium', 'low'].includes(imp) ? imp : 'medium',
+          due_date: dateOk(t.due_date), owner: str(t.owner, 100), quote: str(t.context_quote, 300),
+          time: str(t.time_estimate || t.time, 80), steps: list(t.steps, 30, 500), dependsOn: none(str(t.depends_on, 300)), email
+        };
+      })
     };
+  }
+  const draftDescription = (d) => [d.description, d.time && `Estimated time: ${d.time}`, d.dependsOn && `Depends on: ${d.dependsOn}`].filter(Boolean).join('\n');
+  const emailText = (e) => ['Follow-up email outline', e.to && `To: ${e.to}`, e.purpose && `Purpose: ${e.purpose}`,
+    e.points.length && 'Points to cover:\n' + e.points.map(p => '• ' + p).join('\n')].filter(Boolean).join('\n');
+  /** Notes to attach to an imported task, oldest first (the task page lists newest first). */
+  function importNotes(parsed, d) {
+    const prov = [`Imported from meeting${parsed.title ? ` "${parsed.title}"` : ''}${parsed.date ? ` (${parsed.date})` : ''}.`];
+    if (d.owner) prov.push(`Owner mentioned: ${d.owner}.`);
+    if (d.quote) prov.push(`Transcript: “${d.quote}”`);
+    const notes = [prov.join('\n')];
+    if (d.email) notes.push(emailText(d.email));
+    if (d.steps.length) notes.push('Steps to complete:\n' + d.steps.map((x, i) => `${i + 1}. ${x}`).join('\n'));
+    return notes;
   }
 
   function viewImport() {
     const promptPre = h('pre', { class: 'prompt', id: 'prompt-text' }, PROMPT);
-    const jsonBox = h('textarea', { id: 'import-json', placeholder: 'Paste the JSON Claude returned here…', rows: 8 });
+    const jsonBox = h('textarea', { id: 'import-json', placeholder: 'Paste Claude’s reply here (the JSON block at the end is what gets imported)…', rows: 8 });
     const draftsBox = h('div', { id: 'drafts' });
     const msg = h('div', { class: 'error', role: 'alert' });
     const defaultProject = h('select', { id: 'import-project', 'aria-label': 'Default project' });
@@ -702,21 +761,31 @@ TRANSCRIPT:
       catch (e) { const r = document.createRange(); r.selectNodeContents(promptPre); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Select + copy the prompt manually.'); }
     };
 
+    const planDetails = (d) => {
+      const bits = [d.time, d.steps.length ? `${d.steps.length} step${d.steps.length === 1 ? '' : 's'}` : '', d.dependsOn ? 'has dependencies' : '', d.email ? 'email outline' : ''].filter(Boolean);
+      if (!d.steps.length && !d.email) return null;
+      return h('details', { class: 'plan' }, h('summary', null, 'Plan: ' + (bits.join(' · ') || 'details')),
+        d.steps.length ? h('ol', null, d.steps.map(x => h('li', null, x))) : null,
+        d.email ? h('pre', { class: 'prompt' }, emailText(d.email)) : null,
+        h('div', { class: 'muted small' }, 'These will be saved as notes on the task.'));
+    };
+
     const showDrafts = () => {
       msg.textContent = '';
       let parsed;
       try { parsed = parseImport(jsonBox.value); } catch (e) { msg.textContent = e.message; draftsBox.replaceChildren(); return; }
-      if (!parsed.tasks.length) { draftsBox.replaceChildren(h('div', { class: 'empty' }, 'No action items found in that JSON.')); return; }
+      if (!parsed.tasks.length) { draftsBox.replaceChildren(h('div', { class: 'empty' }, 'No tasks found in that JSON.')); return; }
       const rows = parsed.tasks.map((d, i) => {
         const inc = h('input', { type: 'checkbox', checked: true, 'aria-label': 'include' });
         const title = h('input', { type: 'text', value: d.title, 'aria-label': 'title', style: 'width:100%' });
-        const desc = h('textarea', { rows: 2, 'aria-label': 'description' }); desc.value = d.description;
+        const desc = h('textarea', { rows: 2, 'aria-label': 'description' }); desc.value = draftDescription(d);
         const pri = h('select', { 'aria-label': 'importance' }); fillSelect(pri, statusOptions(IMPORTANCE), d.importance);
         const due = h('input', { type: 'date', 'aria-label': 'due date', value: d.due_date });
         const proj = h('select', { 'aria-label': 'project', class: 'draft-project' }); fillSelect(proj, projectOptions(), defaultProject.value);
         const card = h('div', { class: 'card draft', 'data-draft': i },
           inc, h('div', null, title, desc,
             h('div', { class: 'draft-grid' }, h('div', null, h('label', null, 'Importance'), pri), h('div', null, h('label', null, 'Due'), due), h('div', null, h('label', null, 'Project'), proj)),
+            planDetails(d),
             d.owner || d.quote ? h('div', { class: 'muted small', style: 'margin-top:6px' }, d.owner ? `Owner: ${d.owner}. ` : '', d.quote ? `“${d.quote}”` : '') : null));
         return { d, inc, title, desc, pri, due, proj, card };
       });
@@ -736,12 +805,12 @@ TRANSCRIPT:
         project_id: nul(r.proj.value), title: r.title.value.trim(), description: nul(r.desc.value),
         importance: r.pri.value, due_date: nul(r.due.value), status: 'todo', source: 'transcript'
       }))).select()) || [];
-      const noteRows = inserted.map((t, i) => {
-        const d = chosen[i].d;
-        const parts = [`Imported from meeting${parsed.title ? ` "${parsed.title}"` : ''}${parsed.date ? ` (${parsed.date})` : ''}.`];
-        if (d.owner) parts.push(`Owner mentioned: ${d.owner}.`);
-        if (d.quote) parts.push(`Transcript: “${d.quote}”`);
-        return { task_id: t.id, body: parts.join('\n') };
+      const base = Date.now();
+      const noteRows = [];
+      inserted.forEach((t, i) => {
+        const notes = importNotes(parsed, chosen[i].d);
+        // explicit, increasing timestamps keep the notes in a predictable order
+        notes.forEach((body, k) => noteRows.push({ task_id: t.id, body, created_at: new Date(base - (notes.length - 1 - k) * 1000).toISOString() }));
       });
       if (noteRows.length) must(await db.from('task_notes').insert(noteRows));
       await loadCore();
@@ -752,10 +821,14 @@ TRANSCRIPT:
     return [
       pageHead('Import from a meeting transcript', 'Claude-assisted: no API key or cost inside this app.'),
       h('div', { class: 'card' },
-        h('div', { class: 'card-head' }, h('h2', { class: 'grow' }, '1. Copy this prompt'), btn('Copy prompt', copy, 'small')),
-        h('p', { class: 'muted small' }, 'Paste it into Claude, replace the last line with your transcript, and send.'), promptPre),
+        h('div', { class: 'card-head' }, h('h2', { class: 'grow' }, '1. Copy the prompt into a new Claude chat'), btn('Copy prompt', copy, 'small')),
+        h('p', { class: 'muted small' }, 'Start a new chat for each meeting. Paste the prompt, then upload your transcript (and your note-taker’s overview, if you have one). Claude replies with a numbered list of tasks.'),
+        h('details', { class: 'plan' }, h('summary', null, 'Show the prompt'), promptPre)),
       h('div', { class: 'card' },
-        h('h2', null, '2. Paste Claude’s JSON reply'), jsonBox,
+        h('h2', null, '2. Reply with the numbers you want'),
+        h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Claude sends back a plan and email outline for each one, followed by a JSON block for this tracker.')),
+      h('div', { class: 'card' },
+        h('h2', null, '3. Paste Claude’s reply here'), jsonBox,
         h('div', { class: 'filters', style: 'margin-top:8px' },
           h('label', { for: 'import-project', class: 'muted small', style: 'align-self:center' }, 'Default project for all drafts:'), defaultProject,
           btn('Preview drafts', showDrafts, 'primary')), msg),
