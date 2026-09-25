@@ -84,6 +84,7 @@ code { background: rgba(255, 255, 255, .08); padding: 1px 6px; border-radius: 4p
 .btn.link { border: none; background: none; color: var(--teal2); padding: 2px 6px; box-shadow: none; }
 .btn.link:hover { text-decoration: underline; transform: none; background: none; }
 .btn.link.del { color: var(--red-soft); }
+.btn { white-space: nowrap; }
 .btn:disabled { opacity: .5; cursor: default; transform: none; }
 
 /* ---------- tables ---------- */
@@ -207,7 +208,7 @@ a.kpi:hover { transform: translateY(-3px); text-decoration: none; box-shadow: 0 
 .pill-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin: 26px 2px 12px; }
 .section-head h2 { font-size: 1.15rem; }
-.proj-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.proj-grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
 .proj-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow);
   display: grid; gap: 10px; transition: transform .15s, border-color .15s; animation: rise .45s ease both; }
 .proj-card:hover { transform: translateY(-3px); border-color: rgba(45, 212, 191, .55); }
@@ -219,7 +220,7 @@ a.kpi:hover { transform: translateY(-3px); text-decoration: none; box-shadow: 0 
 .proj-meta .pct { margin-left: auto; font-weight: 800; color: #99f6e4; }
 
 /* ---------- active task cards ---------- */
-.task-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.task-grid { display: grid; gap: 12px; grid-template-columns: 1fr; }
 .task-card { --imp: #38bdf8; background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--imp); border-radius: var(--radius);
   padding: 14px 16px; box-shadow: var(--shadow); display: grid; gap: 8px; align-content: start; transition: transform .15s, border-color .15s; animation: rise .45s ease both; }
 .task-card:hover { transform: translateY(-3px); border-color: var(--imp); }
@@ -229,6 +230,25 @@ a.kpi:hover { transform: translateY(-3px); text-decoration: none; box-shadow: 0 
 .task-card.imp-low { --imp: #94a3b8; }
 .tc-title { font-weight: 700; font-size: 1.02rem; color: var(--text); overflow-wrap: anywhere; }
 .tc-proj { font-size: .85rem; }
+
+/* ---------- full-width rows for Active projects / Active tasks ---------- */
+@media (min-width: 820px) {
+  .proj-card { grid-template-columns: minmax(300px, 1.3fr) minmax(200px, 1.2fr) auto; grid-template-areas: "top bar actions" "top meta actions"; column-gap: 24px; row-gap: 6px; align-items: center; padding: 14px 20px; }
+  .proj-card .proj-top { grid-area: top; flex-wrap: wrap; justify-content: flex-start; gap: 10px 12px; }
+  .proj-card .progress { grid-area: bar; align-self: end; }
+  .proj-card .proj-meta { grid-area: meta; align-self: start; }
+  .proj-card .actions { grid-area: actions; flex-wrap: nowrap; justify-self: end; }
+  .proj-card:hover, .task-card:hover { transform: translateX(3px); }
+
+  .task-card { grid-template-columns: minmax(200px, 1fr) auto auto; grid-template-areas: "title pills actions" "proj pills actions"; column-gap: 20px; row-gap: 2px; align-items: center; padding: 12px 20px; }
+  .task-card .tc-title { grid-area: title; align-self: end; }
+  .task-card .tc-proj { grid-area: proj; align-self: start; }
+  .task-card .pill-row { grid-area: pills; justify-content: flex-end; flex-wrap: nowrap; }
+  .task-card .actions { grid-area: actions; flex-wrap: nowrap; justify-self: end; }
+}
+@media (min-width: 820px) and (max-width: 1100px) {
+  .task-card .pill-row { flex-wrap: wrap; max-width: 260px; }
+}
 
 /* ---------- importance & urgency report ---------- */
 .pill-row.tight { margin-top: 0; gap: 6px; }
