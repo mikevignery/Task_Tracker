@@ -60,7 +60,18 @@
   const nul = (v) => (v == null || String(v).trim() === '' ? null : String(v).trim());
   const fmtMin = (m) => { m = Math.max(0, Math.round(m || 0)); const hr = Math.floor(m / 60), mm = m % 60; return hr ? `${hr}h ${String(mm).padStart(2, '0')}m` : `${mm}m`; };
   const fmtDT = (s) => { const d = new Date(s); return isNaN(d) ? '' : d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }); };
-  const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const today = () => ymd(new Date());
+  const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); };
+  // Chart / pill colours (mirrored in style.css)
+  const COLORS = { todo: '#38bdf8', in_progress: '#2dd4bf', blocked: '#fbbf24', done: '#4ade80' };
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function s(tag, props, ...kids) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(props || {})) if (v != null) el.setAttribute(k, v);
+    for (const kid of kids.flat(Infinity)) { if (kid == null) continue; el.appendChild(typeof kid === 'object' ? kid : document.createTextNode(String(kid))); }
+    return el;
+  }
   const projectName = (id) => (state.projects.find(p => p.id === id) || {}).name || null;
   const taskLabel = (t) => (t.project_id && projectName(t.project_id) ? projectName(t.project_id) + ' › ' : '') + t.title;
 
@@ -321,7 +332,7 @@
         h('thead', null, h('tr', null, h('th', null, 'Project'), h('th', null, 'Status'), h('th', null, 'Open tasks'))),
         h('tbody', null, state.projects.map(p => h('tr', { 'data-project-id': p.id },
           h('td', null, h('a', { href: '#/project/' + p.id }, p.name)),
-          h('td', null, badge(label(PROJECT_STATUSES, p.status))),
+          h('td', null, badge(label(PROJECT_STATUSES, p.status), 'ps-' + p.status)),
           h('td', null, `${(counts[p.id] || { open: 0 }).open} of ${(counts[p.id] || { all: 0 }).all}`))))))
         : h('div', { class: 'empty' }, 'No projects yet. Tasks can exist without one.')),
       h('p', { class: 'muted small' }, `Tasks with no project: ${inbox.all} (${inbox.open} open). `, h('a', { href: '#/tasks?project=none' }, 'View'))
@@ -338,7 +349,7 @@
         btn('Edit', () => projectForm(p)),
         btn('Delete', async () => { if (await deleteRow('projects', id, 'project (its tasks are kept, just unassigned)')) { await loadCore(); location.hash = '#/projects'; } }, 'danger')
       ], h('a', { href: '#/projects' }, '‹ Projects')),
-      h('div', { class: 'card' }, badge(label(PROJECT_STATUSES, p.status)), ' ', taskTable(tasks, false))
+      h('div', { class: 'card' }, badge(label(PROJECT_STATUSES, p.status), 'ps-' + p.status), ' ', taskTable(tasks, false))
     ];
   }
 
@@ -350,7 +361,7 @@
     const listBox = h('div', { class: 'card' });
     const draw = () => {
       const rows = state.tasks.filter(t =>
-        (f.status === 'all' || (f.status === 'open' ? t.status !== 'done' : t.status === f.status)) &&
+        (f.status === 'all' || (f.status === 'overdue' ? isOverdue(t) : f.status === 'open' ? t.status !== 'done' : t.status === f.status)) &&
         (f.project === 'all' || (f.project === 'none' ? !t.project_id : t.project_id === f.project)) &&
         (!f.text || (t.title + ' ' + (t.description || '')).toLowerCase().includes(f.text.toLowerCase())));
       listBox.replaceChildren(taskTable(rows, true));
@@ -363,7 +374,7 @@
     return [
       pageHead('Tasks', null, btn('+ New task', () => taskForm(null, { project_id: newTaskProject() }), 'primary')),
       h('div', { class: 'filters' },
-        sel([{ value: 'open', label: 'Open' }, { value: 'all', label: 'All statuses' }].concat(statusOptions(STATUSES)), f.status, v => setF('status', v), 'status'),
+        sel([{ value: 'open', label: 'Open' }, { value: 'overdue', label: 'Overdue' }, { value: 'all', label: 'All statuses' }].concat(statusOptions(STATUSES)), f.status, v => setF('status', v), 'status'),
         sel([{ value: 'all', label: 'All projects' }, { value: 'none', label: 'No project' }].concat(state.projects.map(p => ({ value: p.id, label: p.name }))), f.project, v => setF('project', v), 'project'),
         search),
       listBox
@@ -381,7 +392,7 @@
     const noteEl = (n, onEdit, table, what) => h('div', { class: 'note', 'data-note-id': n.id },
       h('div', { class: 'meta' }, fmtDT(n.created_at),
         h('button', { type: 'button', class: 'btn link small', onclick: () => guard(onEdit) }, 'Edit'),
-        h('button', { type: 'button', class: 'btn link small', onclick: () => guard(async () => { if (await deleteRow(table, n.id, what)) render(); }) }, 'Delete')),
+        h('button', { type: 'button', class: 'btn link small del', onclick: () => guard(async () => { if (await deleteRow(table, n.id, what)) render(); }) }, 'Delete')),
       h('div', { class: 'body' }, n.body));
 
     const proj = t.project_id ? state.projects.find(p => p.id === t.project_id) : null;
@@ -411,11 +422,150 @@
             h('div', { class: 'card-head' },
               h('h3', { class: 'grow' }, w.work_date, ' · ', running ? 'timer running…' : fmtMin(w.minutes)),
               running ? null : h('button', { type: 'button', class: 'btn link small', onclick: () => guard(() => workLogForm(w)) }, 'Edit'),
-              h('button', { type: 'button', class: 'btn link small', onclick: () => guard(async () => { if (await deleteRow('work_logs', w.id, 'work log (with its notes)')) { await loadCore(); render(); } }) }, 'Delete'),
+              h('button', { type: 'button', class: 'btn link small del', onclick: () => guard(async () => { if (await deleteRow('work_logs', w.id, 'work log (with its notes)')) { await loadCore(); render(); } }) }, 'Delete'),
               btn('+ Note', () => workLogNoteForm(null, { task_id: id, work_log_id: w.id }), 'small')),
             w.summary ? h('div', { class: 'body', style: 'white-space:pre-wrap' }, w.summary) : null,
             mine.length ? h('div', { class: 'log-notes' }, mine.map(n => noteEl(n, () => workLogNoteForm(n, { task_id: id }), 'work_log_notes', 'work log note'))) : null);
         }) : h('div', { class: 'empty' }, 'No work logged yet.'))
+    ];
+  }
+
+  // ------------------------------------------------------------- dashboard
+  function grad(id, c1, c2) {
+    return s('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 }, s('stop', { offset: '0%', 'stop-color': c1 }), s('stop', { offset: '100%', 'stop-color': c2 }));
+  }
+  function donut(segments, total) {
+    const R = 54, C = 2 * Math.PI * R;
+    const svg = s('svg', { viewBox: '0 0 140 140', class: 'donut', role: 'img', 'aria-label': 'Tasks by status: ' + segments.map(g => `${g.label} ${g.value}`).join(', ') },
+      s('circle', { cx: 70, cy: 70, r: R, fill: 'none', stroke: 'rgba(148,197,255,.14)', 'stroke-width': 16 }));
+    let off = 0;
+    for (const g of segments) {
+      if (!g.value || !total) continue;
+      const len = g.value / total * C, dash = Math.max(len - 3, 0.5);
+      svg.appendChild(s('circle', { cx: 70, cy: 70, r: R, fill: 'none', stroke: g.color, 'stroke-width': 16, 'stroke-dasharray': `${dash} ${C - dash}`, 'stroke-dashoffset': -off, transform: 'rotate(-90 70 70)', class: 'seg' }, s('title', null, `${g.label}: ${g.value}`)));
+      off += len;
+    }
+    svg.appendChild(s('text', { x: 70, y: 70, 'text-anchor': 'middle', class: 'donut-num' }, String(total)));
+    svg.appendChild(s('text', { x: 70, y: 88, 'text-anchor': 'middle', class: 'donut-sub' }, total === 1 ? 'task' : 'tasks'));
+    return svg;
+  }
+  function hoursChart(days) {
+    const W = 600, H = 230, L = 34, Rr = 8, T = 22, B = 36;
+    const maxH = Math.max(1, Math.ceil(Math.max(...days.map(d => d.minutes)) / 60));
+    const iw = W - L - Rr, ih = H - T - B, slot = iw / days.length, bw = slot * 0.62;
+    const yOf = (hrs) => T + ih - (hrs / maxH) * ih;
+    const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img',
+      'aria-label': 'Hours logged per day over the last 14 days: ' + days.map(d => `${d.date} ${fmtMin(d.minutes)}`).join(', ') },
+      s('defs', null, grad('gBar', '#2dd4bf', '#1d4ed8'), grad('gToday', '#a5f3fc', '#14b8a6')));
+    for (const v of [0, maxH / 2, maxH]) {
+      svg.appendChild(s('line', { x1: L, x2: W - Rr, y1: yOf(v), y2: yOf(v), class: 'grid' }));
+      svg.appendChild(s('text', { x: L - 6, y: yOf(v) + 3.5, 'text-anchor': 'end', class: 'axis' }, `${v}h`));
+    }
+    days.forEach((d, i) => {
+      const hrs = d.minutes / 60, x = L + i * slot + (slot - bw) / 2;
+      const hgt = d.minutes > 0 ? Math.max(3, (hrs / maxH) * ih) : 0;
+      if (hgt) {
+        svg.appendChild(s('rect', { x, y: T + ih - hgt, width: bw, height: hgt, rx: 4, class: 'bar', style: `animation-delay:${i * 35}ms`,
+          fill: i === days.length - 1 ? 'url(#gToday)' : 'url(#gBar)' }, s('title', null, `${d.date}: ${fmtMin(d.minutes)}`)));
+        svg.appendChild(s('text', { x: x + bw / 2, y: T + ih - hgt - 5, 'text-anchor': 'middle', class: 'val' }, hrs >= 10 ? Math.round(hrs) : hrs.toFixed(1)));
+      }
+      const dt = new Date(d.date + 'T00:00:00');
+      svg.appendChild(s('text', { x: x + bw / 2, y: H - 20, 'text-anchor': 'middle', class: 'axis' + (i === days.length - 1 ? ' today' : '') }, 'SMTWTFS'[dt.getDay()]));
+      svg.appendChild(s('text', { x: x + bw / 2, y: H - 7, 'text-anchor': 'middle', class: 'axis' + (i === days.length - 1 ? ' today' : '') }, String(dt.getDate())));
+    });
+    if (days.every(d => d.minutes === 0)) svg.appendChild(s('text', { x: W / 2, y: T + ih / 2, 'text-anchor': 'middle', class: 'axis empty-msg' }, 'No time logged yet – start a timer or add a work log'));
+    return svg;
+  }
+
+  async function viewDashboard() {
+    const logs = must(await db.from('work_logs').select('id,task_id,work_date,minutes,timer_started_at,created_at').gte('work_date', daysAgo(13))) || [];
+    const openTasks = state.tasks.filter(t => t.status !== 'done');
+    const overdue = openTasks.filter(isOverdue);
+    const weekMin = logs.filter(l => l.work_date >= daysAgo(6)).reduce((a, l) => a + (l.minutes || 0), 0);
+    const doneWeek = state.tasks.filter(t => t.status === 'done' && Date.now() - new Date(t.updated_at).getTime() < 7 * 864e5).length;
+    const activeProjects = state.projects.filter(p => p.status === 'active');
+    const days = [];
+    for (let i = 13; i >= 0; i--) { const date = daysAgo(i); days.push({ date, minutes: logs.filter(l => l.work_date === date).reduce((a, l) => a + (l.minutes || 0), 0) }); }
+    const statusCounts = STATUSES.map(([k, l]) => ({ key: k, label: l, color: COLORS[k], value: state.tasks.filter(t => t.status === k).length }));
+
+    const hr = new Date().getHours();
+    const greeting = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+    const tile = (val, lab, sub, cls, href) => h(href ? 'a' : 'div', { class: 'kpi ' + cls, href: href || null },
+      h('div', { class: 'kpi-val' }, val), h('div', { class: 'kpi-label' }, lab), sub ? h('div', { class: 'kpi-sub' }, sub) : null);
+
+    // quick-create defaults: the running task, else an in-progress task, else the first open task
+    const defaultTaskId = () => (state.running && state.running.task_id) || (openTasks.find(t => t.status === 'in_progress') || openTasks[0] || state.tasks[0] || {}).id;
+    const recentLog = logs.slice().sort((a, b) => (b.work_date + b.created_at).localeCompare(a.work_date + a.created_at))[0];
+    const needTask = (fn) => () => { const id = defaultTaskId(); if (!id) { toast('Create a task first.', true); return; } fn(id); };
+
+    // per-project stats
+    const stats = activeProjects.map(p => {
+      const ts = state.tasks.filter(t => t.project_id === p.id);
+      const done = ts.filter(t => t.status === 'done').length;
+      return { p, total: ts.length, done, open: ts.length - done, over: ts.filter(isOverdue).length };
+    }).sort((a, b) => b.open - a.open || a.p.name.localeCompare(b.p.name));
+    const unassigned = state.tasks.filter(t => !t.project_id);
+    const unassignedOpen = unassigned.filter(t => t.status !== 'done').length;
+
+    const projectCard = (name, href, st, onAdd) => {
+      const pct = st.total ? Math.round(st.done / st.total * 100) : 0;
+      return h('div', { class: 'proj-card' },
+        h('div', { class: 'proj-top' }, h('a', { class: 'proj-name', href }, name), st.over ? badge(`${st.over} overdue`, 'overdue') : null),
+        h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': `${name} progress` }, h('span', { style: `width:${pct}%` })),
+        h('div', { class: 'proj-meta' }, h('span', null, `${st.done}/${st.total} done`), badge(`${st.open} open`, 's-in_progress'), h('span', { class: 'pct' }, pct + '%')),
+        h('div', { class: 'actions' }, h('a', { class: 'btn small', href }, 'Open'), btn('+ Task', onAdd, 'small')));
+    };
+
+    // workload (open tasks per project)
+    const load = stats.map(x => ({ name: x.p.name, href: '#/project/' + x.p.id, n: x.open }));
+    if (unassignedOpen) load.push({ name: 'No project', href: '#/tasks?project=none', n: unassignedOpen });
+    load.sort((a, b) => b.n - a.n); const top = load.slice(0, 6), maxLoad = Math.max(1, ...top.map(x => x.n));
+    const prio = PRIORITIES.slice().reverse().map(([k, l]) => badge(`${l} · ${openTasks.filter(t => t.priority === k).length}`, 'p-' + k));
+
+    const pw = { high: 0, medium: 1, low: 2 };
+    const attention = openTasks.slice().sort((a, b) => (isOverdue(b) ? 1 : 0) - (isOverdue(a) ? 1 : 0) ||
+      (a.due_date || '9999').localeCompare(b.due_date || '9999') || pw[a.priority] - pw[b.priority]).slice(0, 10);
+
+    return [
+      h('section', { class: 'hero' },
+        h('div', null, h('h1', null, greeting), h('div', { class: 'hero-sub' },
+          new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }), ' • ',
+          `${openTasks.length} open task${openTasks.length === 1 ? '' : 's'}`, overdue.length ? `, ${overdue.length} overdue` : '')),
+        h('div', { class: 'quick', id: 'quick-create' },
+          btn('+ Project', () => projectForm(null), 'primary'),
+          btn('+ Task', () => taskForm(null, { project_id: '' }), 'primary'),
+          btn('+ Work log', needTask(id => workLogForm(null, { task_id: id })), 'primary'),
+          btn('+ Task note', needTask(id => taskNoteForm(null, { task_id: id })), 'ghost'),
+          btn('+ Work log note', needTask(id => workLogNoteForm(null, recentLog ? { task_id: recentLog.task_id, work_log_id: recentLog.id } : { task_id: id })), 'ghost'))),
+
+      h('section', { class: 'kpis' },
+        tile(activeProjects.length, 'Active projects', `${state.projects.length} total`, 'k-teal', '#/projects'),
+        tile(openTasks.length, 'Open tasks', `${state.tasks.length} all-time`, 'k-blue', '#/tasks'),
+        tile(overdue.length, 'Overdue', overdue.length ? 'Needs attention' : 'All caught up', 'k-red', '#/tasks?status=overdue'),
+        tile(doneWeek, 'Done this week', 'last 7 days', 'k-green', '#/tasks?status=done'),
+        tile(fmtMin(weekMin), 'Time this week', 'last 7 days', 'k-cyan')),
+
+      h('section', { class: 'charts' },
+        h('div', { class: 'panel' }, h('h2', null, 'Tasks by status'),
+          h('div', { class: 'donut-wrap' }, donut(statusCounts, state.tasks.length),
+            h('ul', { class: 'legend' }, statusCounts.map(g => h('li', null, badge(g.label, 's-' + g.key), h('b', null, g.value)))))),
+        h('div', { class: 'panel wide' }, h('h2', null, 'Hours logged · last 14 days'), hoursChart(days)),
+        h('div', { class: 'panel' }, h('h2', null, 'Open work by project'),
+          top.length ? h('div', { class: 'hbars' }, top.map((x, i) => h('a', { class: 'hrow c' + (i % 6), href: x.href },
+            h('span', { class: 'hname' }, x.name), h('span', { class: 'htrack' }, h('span', { class: 'hfill', style: `width:${Math.max(6, x.n / maxLoad * 100)}%` })), h('b', null, x.n))))
+            : h('div', { class: 'empty' }, 'Nothing open. Nice.'),
+          h('div', { class: 'pill-row' }, prio))),
+
+      h('section', null,
+        h('div', { class: 'section-head' }, h('h2', null, 'Active projects'), h('a', { href: '#/projects' }, 'All projects ›')),
+        (stats.length || unassigned.length) ? h('div', { class: 'proj-grid' },
+          stats.map(x => projectCard(x.p.name, '#/project/' + x.p.id, x, () => taskForm(null, { project_id: x.p.id }))),
+          unassigned.length ? projectCard('No project', '#/tasks?project=none', { total: unassigned.length, done: unassigned.length - unassignedOpen, open: unassignedOpen, over: unassigned.filter(isOverdue).length }, () => taskForm(null, { project_id: '' })) : null)
+          : h('div', { class: 'panel empty' }, 'No active projects yet. Use “+ Project” above to create one.')),
+
+      h('section', null,
+        h('div', { class: 'section-head' }, h('h2', null, 'Needs your attention'), h('a', { href: '#/tasks' }, `All ${openTasks.length} open tasks ›`)),
+        h('div', { class: 'panel' }, taskTable(attention, true)))
     ];
   }
 
@@ -588,14 +738,15 @@ TRANSCRIPT:
     topbar.hidden = false;
     document.getElementById('user-email').textContent = state.user.email || '';
     const [name, id] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
-    document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === (name === 'project' ? 'projects' : name === 'task' ? 'tasks' : name)));
+    document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === (name === 'project' ? 'projects' : name === 'task' ? 'tasks' : (name || 'dashboard'))));
     let out;
     try {
-      if (name === 'projects') out = viewProjects();
+      if (name === 'tasks') out = viewTasks();
+      else if (name === 'projects') out = viewProjects();
       else if (name === 'project') out = viewProject(id);
       else if (name === 'task') out = await viewTask(id);
       else if (name === 'import') out = viewImport();
-      else out = viewTasks();
+      else out = await viewDashboard();
     } catch (e) { out = h('div', { class: 'card' }, h('p', { class: 'error' }, e.message || String(e))); }
     if (seq !== renderSeq) return;            // a newer render superseded this one
     $app.replaceChildren(...[].concat(out));
@@ -606,7 +757,7 @@ TRANSCRIPT:
     const user = session && session.user ? session.user : null;
     if ((user && state.user && user.id === state.user.id) || (!user && !state.user)) return;
     state.user = user;
-    if (user) { await guard(loadCore); if (!location.hash) location.hash = '#/tasks'; }
+    if (user) { await guard(loadCore); if (!location.hash) location.hash = '#/dashboard'; }
     else { state.projects = []; state.tasks = []; state.running = null; updateTimerUI(); }
     render();
   }
