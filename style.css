@@ -218,6 +218,18 @@ a.kpi:hover { transform: translateY(-3px); text-decoration: none; box-shadow: 0 
 .proj-meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .85rem; }
 .proj-meta .pct { margin-left: auto; font-weight: 800; color: #99f6e4; }
 
+/* ---------- active task cards ---------- */
+.task-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.task-card { --imp: #38bdf8; background: var(--panel); border: 1px solid var(--border); border-left: 4px solid var(--imp); border-radius: var(--radius);
+  padding: 14px 16px; box-shadow: var(--shadow); display: grid; gap: 8px; align-content: start; transition: transform .15s, border-color .15s; animation: rise .45s ease both; }
+.task-card:hover { transform: translateY(-3px); border-color: var(--imp); }
+.task-card.imp-critical { --imp: #e879f9; box-shadow: var(--shadow), 0 0 22px rgba(217, 70, 239, .14); }
+.task-card.imp-high { --imp: #fb923c; }
+.task-card.imp-medium { --imp: #38bdf8; }
+.task-card.imp-low { --imp: #94a3b8; }
+.tc-title { font-weight: 700; font-size: 1.02rem; color: var(--text); overflow-wrap: anywhere; }
+.tc-proj { font-size: .85rem; }
+
 /* ---------- importance & urgency report ---------- */
 .pill-row.tight { margin-top: 0; gap: 6px; }
 .report > .panel { min-width: 0; }
