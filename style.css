@@ -260,6 +260,10 @@ a.kpi:hover { transform: translateY(-3px); text-decoration: none; box-shadow: 0 
 .seg-low { background: linear-gradient(90deg, #cbd5e1, #94a3b8); }
 
 /* ---------- transcript import ---------- */
+details.plan { margin-top: 8px; }
+details.plan summary { cursor: pointer; color: var(--teal2); font-weight: 600; font-size: .9rem; }
+details.plan ol { margin: 8px 0; padding-left: 22px; }
+details.plan pre.prompt { max-height: none; }
 .draft { display: grid; grid-template-columns: auto 1fr; gap: 12px; }
 .draft-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 8px; }
 .draft-grid label { display: block; font-size: .78rem; color: var(--muted); }
