@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Task Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar" id="topbar" hidden>
+    <a class="brand" href="#/tasks">Task Tracker</a>
+    <nav>
+      <a href="#/projects" data-nav="projects">Projects</a>
+      <a href="#/tasks" data-nav="tasks">Tasks</a>
+      <a href="#/import" data-nav="import">Import transcript</a>
+    </nav>
+    <div class="spacer"></div>
+    <div id="timer" class="timer" hidden>
+      <a id="timer-link" href="#/tasks"></a>
+      <span id="timer-clock">00:00:00</span>
+      <button type="button" id="timer-stop" class="btn small danger">Stop</button>
+    </div>
+    <span id="user-email" class="muted small"></span>
+    <button type="button" id="signout" class="btn small">Sign out</button>
+  </header>
+
+  <main id="app" class="container">
+    <p class="muted">Loading&hellip;</p>
+  </main>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <!-- 1. Your Supabase URL + anon key go in config.js -->
+  <script src="config.js"></script>
+  <!-- 2. Supabase client library -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- 3. The app -->
+  <script src="app.js"></script>
+</body>
+</html>
