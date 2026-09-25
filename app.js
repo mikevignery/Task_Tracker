@@ -36,7 +36,10 @@
   const state = { user: null, projects: [], tasks: [], running: null };
   const $app = document.getElementById('app');
   const STATUSES = [['todo', 'To do'], ['in_progress', 'In progress'], ['blocked', 'Blocked'], ['done', 'Done']];
-  const PRIORITIES = [['low', 'Low'], ['medium', 'Medium'], ['high', 'High']];
+  const IMPORTANCE = [['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
+  const RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+  const IMP_COLORS = { critical: '#e879f9', high: '#fb923c', medium: '#38bdf8', low: '#94a3b8' };
+  const impPill = (v) => badge(label(IMPORTANCE, v), 'p-' + v);
   const PROJECT_STATUSES = [['active', 'Active'], ['on_hold', 'On hold'], ['done', 'Done'], ['archived', 'Archived']];
   const label = (list, v) => (list.find(x => x[0] === v) || [v, v])[1];
 
@@ -177,14 +180,15 @@
   // ------------------------------------------------------------ entity forms
   function projectForm(p) {
     openForm({
-      title: p ? 'Edit project' : 'New project', values: p || { status: 'active' },
+      title: p ? 'Edit project' : 'New project', values: p || { status: 'active', importance: 'medium' },
       fields: [
         { name: 'name', label: 'Name', required: true },
         { name: 'description', label: 'Description', type: 'textarea' },
-        { name: 'status', label: 'Status', type: 'select', options: statusOptions(PROJECT_STATUSES) }
+        { name: 'status', label: 'Status', type: 'select', options: statusOptions(PROJECT_STATUSES) },
+        { name: 'importance', label: 'Importance', type: 'select', options: statusOptions(IMPORTANCE) }
       ],
       onSubmit: async (v) => {
-        await saveRow('projects', p && p.id, { name: v.name.trim(), description: nul(v.description), status: v.status });
+        await saveRow('projects', p && p.id, { name: v.name.trim(), description: nul(v.description), status: v.status, importance: v.importance });
         await loadCore(); render();
       }
     });
@@ -192,7 +196,7 @@
 
   /** Task form. `prefill.project_id` is the auto-populated parent. */
   function taskForm(t, prefill = {}) {
-    const vals = t || Object.assign({ status: 'todo', priority: 'medium', project_id: '' }, prefill);
+    const vals = t || Object.assign({ status: 'todo', importance: 'medium', project_id: '' }, prefill);
     openForm({
       title: t ? 'Edit task' : 'New task', values: vals,
       fields: [
@@ -200,13 +204,13 @@
         { name: 'title', label: 'Title', required: true },
         { name: 'description', label: 'Description', type: 'textarea' },
         { name: 'status', label: 'Status', type: 'select', options: statusOptions(STATUSES) },
-        { name: 'priority', label: 'Priority', type: 'select', options: statusOptions(PRIORITIES) },
+        { name: 'importance', label: 'Importance', type: 'select', options: statusOptions(IMPORTANCE) },
         { name: 'due_date', label: 'Due date', type: 'date' }
       ],
       onSubmit: async (v) => {
         await saveRow('tasks', t && t.id, {
           project_id: nul(v.project_id), title: v.title.trim(), description: nul(v.description),
-          status: v.status, priority: v.priority, due_date: nul(v.due_date)
+          status: v.status, importance: v.importance, due_date: nul(v.due_date)
         });
         await loadCore(); render();
       }
@@ -308,16 +312,21 @@
   }
   const btn = (text, onclick, cls) => h('button', { type: 'button', class: 'btn ' + (cls || ''), onclick: () => guard(onclick) }, text);
   function isOverdue(t) { return t.due_date && t.status !== 'done' && t.due_date < today(); }
+  function dueBucket(t) {
+    if (!t.due_date) return 'none';
+    if (t.due_date < today()) return 'overdue';
+    return t.due_date <= daysAgo(-7) ? 'week' : 'later';
+  }
 
   function taskTable(tasks, showProject) {
     if (!tasks.length) return h('div', { class: 'empty' }, 'No tasks to show.');
     return h('div', { class: 'table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, h('th', null, 'Task'), showProject ? h('th', null, 'Project') : null, h('th', null, 'Status'), h('th', null, 'Priority'), h('th', null, 'Due'))),
+      h('thead', null, h('tr', null, h('th', null, 'Task'), showProject ? h('th', null, 'Project') : null, h('th', null, 'Status'), h('th', null, 'Importance'), h('th', null, 'Due'))),
       h('tbody', null, tasks.map(t => h('tr', { 'data-task-id': t.id },
         h('td', null, h('a', { href: '#/task/' + t.id }, t.title)),
         showProject ? h('td', null, t.project_id ? h('a', { href: '#/project/' + t.project_id }, projectName(t.project_id) || '') : h('span', { class: 'muted' }, '—')) : null,
         h('td', null, badge(label(STATUSES, t.status), 's-' + t.status)),
-        h('td', null, badge(label(PRIORITIES, t.priority), 'p-' + t.priority)),
+        h('td', null, impPill(t.importance)),
         h('td', null, t.due_date ? badge(t.due_date, isOverdue(t) ? 'overdue' : '') : h('span', { class: 'muted' }, '—')))))));
   }
 
@@ -326,12 +335,14 @@
     const counts = {};
     for (const t of state.tasks) { const c = counts[t.project_id] || (counts[t.project_id] = { open: 0, all: 0 }); c.all++; if (t.status !== 'done') c.open++; }
     const inbox = counts[null] || counts['null'] || { open: 0, all: 0 };
+    const sorted = state.projects.slice().sort((a, b) => RANK[a.importance] - RANK[b.importance] || a.name.localeCompare(b.name));
     return [
       pageHead('Projects', 'Projects only exist when you create them.', btn('+ New project', () => projectForm(null), 'primary')),
       h('div', { class: 'card' }, state.projects.length ? h('div', { class: 'table-wrap' }, h('table', null,
-        h('thead', null, h('tr', null, h('th', null, 'Project'), h('th', null, 'Status'), h('th', null, 'Open tasks'))),
-        h('tbody', null, state.projects.map(p => h('tr', { 'data-project-id': p.id },
+        h('thead', null, h('tr', null, h('th', null, 'Project'), h('th', null, 'Importance'), h('th', null, 'Status'), h('th', null, 'Open tasks'))),
+        h('tbody', null, sorted.map(p => h('tr', { 'data-project-id': p.id },
           h('td', null, h('a', { href: '#/project/' + p.id }, p.name)),
+          h('td', null, impPill(p.importance)),
           h('td', null, badge(label(PROJECT_STATUSES, p.status), 'ps-' + p.status)),
           h('td', null, `${(counts[p.id] || { open: 0 }).open} of ${(counts[p.id] || { all: 0 }).all}`))))))
         : h('div', { class: 'empty' }, 'No projects yet. Tasks can exist without one.')),
@@ -349,21 +360,24 @@
         btn('Edit', () => projectForm(p)),
         btn('Delete', async () => { if (await deleteRow('projects', id, 'project (its tasks are kept, just unassigned)')) { await loadCore(); location.hash = '#/projects'; } }, 'danger')
       ], h('a', { href: '#/projects' }, '‹ Projects')),
-      h('div', { class: 'card' }, badge(label(PROJECT_STATUSES, p.status), 'ps-' + p.status), ' ', taskTable(tasks, false))
+      h('div', { class: 'card' }, impPill(p.importance), ' ', badge(label(PROJECT_STATUSES, p.status), 'ps-' + p.status), ' ', taskTable(tasks, false))
     ];
   }
 
   function parseQuery() { const q = (location.hash.split('?')[1] || ''); return new URLSearchParams(q); }
   function viewTasks() {
     const q = parseQuery();
-    const f = { status: q.get('status') || 'open', project: q.get('project') || 'all', text: q.get('q') || '' };
-    const setF = (k, v) => { f[k] = v; const sp = new URLSearchParams(); if (f.status !== 'open') sp.set('status', f.status); if (f.project !== 'all') sp.set('project', f.project); if (f.text) sp.set('q', f.text); history.replaceState(null, '', '#/tasks' + (sp.toString() ? '?' + sp : '')); draw(); };
+    const f = { status: q.get('status') || 'open', project: q.get('project') || 'all', text: q.get('q') || '', importance: q.get('importance') || 'all', due: q.get('due') || 'any' };
+    const setF = (k, v) => { f[k] = v; const sp = new URLSearchParams(); if (f.status !== 'open') sp.set('status', f.status); if (f.project !== 'all') sp.set('project', f.project); if (f.importance !== 'all') sp.set('importance', f.importance); if (f.due !== 'any') sp.set('due', f.due); if (f.text) sp.set('q', f.text); history.replaceState(null, '', '#/tasks' + (sp.toString() ? '?' + sp : '')); draw(); };
     const listBox = h('div', { class: 'card' });
     const draw = () => {
       const rows = state.tasks.filter(t =>
         (f.status === 'all' || (f.status === 'overdue' ? isOverdue(t) : f.status === 'open' ? t.status !== 'done' : t.status === f.status)) &&
         (f.project === 'all' || (f.project === 'none' ? !t.project_id : t.project_id === f.project)) &&
+        (f.importance === 'all' || t.importance === f.importance) &&
+        (f.due === 'any' || dueBucket(t) === f.due) &&
         (!f.text || (t.title + ' ' + (t.description || '')).toLowerCase().includes(f.text.toLowerCase())));
+      rows.sort((a, b) => RANK[a.importance] - RANK[b.importance] || (a.due_date || '9999').localeCompare(b.due_date || '9999'));
       listBox.replaceChildren(taskTable(rows, true));
     };
     const sel = (opts, val, cb, name) => { const s = h('select', { name, 'aria-label': name }); fillSelect(s, opts, val); s.addEventListener('change', () => cb(s.value)); return s; };
@@ -376,6 +390,8 @@
       h('div', { class: 'filters' },
         sel([{ value: 'open', label: 'Open' }, { value: 'overdue', label: 'Overdue' }, { value: 'all', label: 'All statuses' }].concat(statusOptions(STATUSES)), f.status, v => setF('status', v), 'status'),
         sel([{ value: 'all', label: 'All projects' }, { value: 'none', label: 'No project' }].concat(state.projects.map(p => ({ value: p.id, label: p.name }))), f.project, v => setF('project', v), 'project'),
+        sel([{ value: 'all', label: 'Any importance' }].concat(statusOptions(IMPORTANCE)), f.importance, v => setF('importance', v), 'importance'),
+        sel([{ value: 'any', label: 'Any due date' }, { value: 'overdue', label: 'Overdue' }, { value: 'week', label: 'Due in 7 days' }, { value: 'later', label: 'Due later' }, { value: 'none', label: 'No due date' }], f.due, v => setF('due', v), 'due'),
         search),
       listBox
     ];
@@ -402,7 +418,7 @@
         btn('Delete', async () => { if (await deleteRow('tasks', id, 'task (with its notes and work logs)')) { await loadCore(); location.hash = '#/tasks'; } }, 'danger')
       ], [h('a', { href: '#/tasks' }, 'Tasks'), ' › ', proj ? h('a', { href: '#/project/' + proj.id }, proj.name) : 'No project']),
       h('div', { class: 'card' },
-        badge(label(STATUSES, t.status), 's-' + t.status), ' ', badge(label(PRIORITIES, t.priority), 'p-' + t.priority), ' ',
+        badge(label(STATUSES, t.status), 's-' + t.status), ' ', impPill(t.importance), ' ',
         t.due_date ? badge('Due ' + t.due_date, isOverdue(t) ? 'overdue' : '') : null, ' ',
         t.source === 'transcript' ? badge('From transcript') : null, ' ', h('span', { class: 'muted small' }, `Total logged: ${fmtMin(totalMin)}`)),
 
@@ -502,15 +518,15 @@
     const stats = activeProjects.map(p => {
       const ts = state.tasks.filter(t => t.project_id === p.id);
       const done = ts.filter(t => t.status === 'done').length;
-      return { p, total: ts.length, done, open: ts.length - done, over: ts.filter(isOverdue).length };
-    }).sort((a, b) => b.open - a.open || a.p.name.localeCompare(b.p.name));
+      return { p, importance: p.importance, total: ts.length, done, open: ts.length - done, over: ts.filter(isOverdue).length };
+    }).sort((a, b) => RANK[a.importance] - RANK[b.importance] || b.open - a.open || a.p.name.localeCompare(b.p.name));
     const unassigned = state.tasks.filter(t => !t.project_id);
     const unassignedOpen = unassigned.filter(t => t.status !== 'done').length;
 
     const projectCard = (name, href, st, onAdd) => {
       const pct = st.total ? Math.round(st.done / st.total * 100) : 0;
       return h('div', { class: 'proj-card' },
-        h('div', { class: 'proj-top' }, h('a', { class: 'proj-name', href }, name), st.over ? badge(`${st.over} overdue`, 'overdue') : null),
+        h('div', { class: 'proj-top' }, h('a', { class: 'proj-name', href }, name), h('span', { class: 'pill-row tight' }, st.importance ? impPill(st.importance) : null, st.over ? badge(`${st.over} overdue`, 'overdue') : null)),
         h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': pct, 'aria-valuemin': 0, 'aria-valuemax': 100, 'aria-label': `${name} progress` }, h('span', { style: `width:${pct}%` })),
         h('div', { class: 'proj-meta' }, h('span', null, `${st.done}/${st.total} done`), badge(`${st.open} open`, 's-in_progress'), h('span', { class: 'pct' }, pct + '%')),
         h('div', { class: 'actions' }, h('a', { class: 'btn small', href }, 'Open'), btn('+ Task', onAdd, 'small')));
@@ -520,11 +536,38 @@
     const load = stats.map(x => ({ name: x.p.name, href: '#/project/' + x.p.id, n: x.open }));
     if (unassignedOpen) load.push({ name: 'No project', href: '#/tasks?project=none', n: unassignedOpen });
     load.sort((a, b) => b.n - a.n); const top = load.slice(0, 6), maxLoad = Math.max(1, ...top.map(x => x.n));
-    const prio = PRIORITIES.slice().reverse().map(([k, l]) => badge(`${l} · ${openTasks.filter(t => t.priority === k).length}`, 'p-' + k));
+    const prio = IMPORTANCE.map(([k, l]) => badge(`${l} · ${openTasks.filter(t => t.importance === k).length}`, 'p-' + k));
 
-    const pw = { high: 0, medium: 1, low: 2 };
     const attention = openTasks.slice().sort((a, b) => (isOverdue(b) ? 1 : 0) - (isOverdue(a) ? 1 : 0) ||
-      (a.due_date || '9999').localeCompare(b.due_date || '9999') || pw[a.priority] - pw[b.priority]).slice(0, 10);
+      RANK[a.importance] - RANK[b.importance] || (a.due_date || '9999').localeCompare(b.due_date || '9999')).slice(0, 10);
+
+    // ---- importance & urgency report
+    const BUCKETS = [['overdue', 'Overdue', '239,68,68'], ['week', 'Next 7 days', '251,191,36'], ['later', 'Later', '45,212,191'], ['none', 'No date', '148,163,184']];
+    const cellN = (imp, b) => openTasks.filter(t => t.importance === imp && dueBucket(t) === b).length;
+    const maxCell = Math.max(1, ...IMPORTANCE.flatMap(([k]) => BUCKETS.map(([b]) => cellN(k, b))));
+    const critHigh = openTasks.filter(t => t.importance === 'critical' || t.importance === 'high');
+    const critHighOver = critHigh.filter(isOverdue).length;
+    const matrix = h('table', { class: 'matrix' },
+      h('thead', null, h('tr', null, h('th', null, 'Importance'), BUCKETS.map(([, l]) => h('th', { class: 'num' }, l)), h('th', { class: 'num' }, 'Open'))),
+      h('tbody', null, IMPORTANCE.map(([k]) => h('tr', { 'data-imp': k },
+        h('td', null, impPill(k)),
+        BUCKETS.map(([b, l, rgb]) => {
+          const n = cellN(k, b);
+          return h('td', { class: 'num' }, n ? h('a', { class: 'cell' + (b === 'overdue' && (k === 'critical' || k === 'high') ? ' hot' : ''), 'data-bucket': b, href: `#/tasks?importance=${k}&due=${b}`,
+            style: `--rgb:${rgb};--a:${(n / maxCell).toFixed(2)}`, title: `${n} ${label(IMPORTANCE, k).toLowerCase()} task${n === 1 ? '' : 's'} \u00B7 ${l.toLowerCase()}` }, n) : h('span', { class: 'zero' }, '\u2013'));
+        }),
+        h('td', { class: 'num tot' }, h('a', { href: '#/tasks?importance=' + k }, openTasks.filter(t => t.importance === k).length))))),
+      h('tfoot', null, h('tr', null, h('td', null, 'Total'), BUCKETS.map(([b]) => h('td', { class: 'num' }, openTasks.filter(t => dueBucket(t) === b).length)), h('td', { class: 'num tot' }, openTasks.length))));
+
+    const impRows = stats.map(x => ({ name: x.p.name, href: '#/project/' + x.p.id, importance: x.importance, ts: openTasks.filter(t => t.project_id === x.p.id) }));
+    if (unassignedOpen) impRows.push({ name: 'No project', href: '#/tasks?project=none', importance: null, ts: openTasks.filter(t => !t.project_id) });
+    const maxOpen = Math.max(1, ...impRows.map(r => r.ts.length));
+    const projImp = h('div', { class: 'proj-imp' }, impRows.length ? impRows.map(r => h('a', { class: 'pi-row', href: r.href },
+      h('span', { class: 'pi-name' }, r.name, r.importance ? impPill(r.importance) : null),
+      r.ts.length ? h('span', { class: 'pi-track' }, h('span', { class: 'stack', style: `width:${Math.max(8, r.ts.length / maxOpen * 100)}%` },
+        IMPORTANCE.map(([k, l]) => { const n = r.ts.filter(t => t.importance === k).length; return n ? h('span', { class: 'seg-' + k, style: `flex:${n}`, title: `${n} ${l.toLowerCase()}` }, n) : null; })))
+        : h('span', { class: 'pi-track muted small' }, 'no open tasks'),
+      h('b', null, r.ts.length))) : h('div', { class: 'empty' }, 'No open work.'));
 
     return [
       h('section', { class: 'hero' },
@@ -556,6 +599,18 @@
             : h('div', { class: 'empty' }, 'Nothing open. Nice.'),
           h('div', { class: 'pill-row' }, prio))),
 
+      h('section', { id: 'urgency-report' },
+        h('div', { class: 'section-head' }, h('h2', null, 'Importance & urgency report'),
+          h('span', { class: 'pill-row tight' },
+            badge(`${openTasks.filter(t => t.importance === 'critical').length} critical open`, 'p-critical'),
+            badge(`${critHigh.length} critical/high open`, 'p-high'),
+            badge(`${critHighOver} critical/high overdue`, critHighOver ? 'overdue' : 's-done'))),
+        h('div', { class: 'report' },
+          h('div', { class: 'panel' }, h('h2', null, 'Open tasks: importance \u00D7 due date'), h('div', { class: 'table-wrap' }, matrix),
+            h('p', { class: 'muted small' }, 'Click any number to see those tasks.')),
+          h('div', { class: 'panel' }, h('h2', null, 'Open work by project & importance'), projImp,
+            h('div', { class: 'pill-row' }, IMPORTANCE.map(([k, l]) => badge(l, 'p-' + k)))))),
+
       h('section', null,
         h('div', { class: 'section-head' }, h('h2', null, 'Active projects'), h('a', { href: '#/projects' }, 'All projects ›')),
         (stats.length || unassigned.length) ? h('div', { class: 'proj-grid' },
@@ -582,7 +637,7 @@ Return ONLY one JSON object (no commentary, no markdown) in exactly this shape:
     {
       "title": "imperative verb phrase, max 100 characters",
       "description": "1-3 sentences of needed context, or null",
-      "priority": "low | medium | high",
+      "importance": "critical | high | medium | low",
       "due_date": "YYYY-MM-DD or null",
       "owner": "person named as responsible, or null",
       "context_quote": "short verbatim quote (max 200 chars) that supports this task"
@@ -591,7 +646,7 @@ Return ONLY one JSON object (no commentary, no markdown) in exactly this shape:
 }
 
 Rules:
-- priority is "medium" unless urgency is clearly stated.
+- importance is "medium" unless the transcript clearly signals otherwise ("critical" only for blockers, outages, or hard deadlines; "high" for explicitly stressed items; "low" for nice-to-haves).
 - due_date only if a specific date is given or can be resolved from a relative phrase using meeting_date; otherwise null.
 - If there are no action items, return "tasks": [].
 
@@ -611,7 +666,7 @@ TRANSCRIPT:
       title: nul(obj.meeting_title), date: dateOk(obj.meeting_date),
       tasks: obj.tasks.filter(t => t && nul(t.title)).map(t => ({
         title: String(t.title).trim().slice(0, 200), description: nul(t.description) || '',
-        priority: ['low', 'medium', 'high'].includes(t.priority) ? t.priority : 'medium',
+        importance: ['critical', 'high', 'medium', 'low'].includes(t.importance || t.priority) ? (t.importance || t.priority) : 'medium',
         due_date: dateOk(t.due_date), owner: nul(t.owner) || '', quote: nul(t.context_quote) || ''
       }))
     };
@@ -639,12 +694,12 @@ TRANSCRIPT:
         const inc = h('input', { type: 'checkbox', checked: true, 'aria-label': 'include' });
         const title = h('input', { type: 'text', value: d.title, 'aria-label': 'title', style: 'width:100%' });
         const desc = h('textarea', { rows: 2, 'aria-label': 'description' }); desc.value = d.description;
-        const pri = h('select', { 'aria-label': 'priority' }); fillSelect(pri, statusOptions(PRIORITIES), d.priority);
+        const pri = h('select', { 'aria-label': 'importance' }); fillSelect(pri, statusOptions(IMPORTANCE), d.importance);
         const due = h('input', { type: 'date', 'aria-label': 'due date', value: d.due_date });
         const proj = h('select', { 'aria-label': 'project', class: 'draft-project' }); fillSelect(proj, projectOptions(), defaultProject.value);
         const card = h('div', { class: 'card draft', 'data-draft': i },
           inc, h('div', null, title, desc,
-            h('div', { class: 'draft-grid' }, h('div', null, h('label', null, 'Priority'), pri), h('div', null, h('label', null, 'Due'), due), h('div', null, h('label', null, 'Project'), proj)),
+            h('div', { class: 'draft-grid' }, h('div', null, h('label', null, 'Importance'), pri), h('div', null, h('label', null, 'Due'), due), h('div', null, h('label', null, 'Project'), proj)),
             d.owner || d.quote ? h('div', { class: 'muted small', style: 'margin-top:6px' }, d.owner ? `Owner: ${d.owner}. ` : '', d.quote ? `“${d.quote}”` : '') : null));
         return { d, inc, title, desc, pri, due, proj, card };
       });
@@ -662,7 +717,7 @@ TRANSCRIPT:
       if (!chosen.length) { toast('Nothing selected.', true); return; }
       const inserted = must(await db.from('tasks').insert(chosen.map(r => ({
         project_id: nul(r.proj.value), title: r.title.value.trim(), description: nul(r.desc.value),
-        priority: r.pri.value, due_date: nul(r.due.value), status: 'todo', source: 'transcript'
+        importance: r.pri.value, due_date: nul(r.due.value), status: 'todo', source: 'transcript'
       }))).select()) || [];
       const noteRows = inserted.map((t, i) => {
         const d = chosen[i].d;
