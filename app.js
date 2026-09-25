@@ -538,8 +538,24 @@
     load.sort((a, b) => b.n - a.n); const top = load.slice(0, 6), maxLoad = Math.max(1, ...top.map(x => x.n));
     const prio = IMPORTANCE.map(([k, l]) => badge(`${l} · ${openTasks.filter(t => t.importance === k).length}`, 'p-' + k));
 
-    const attention = openTasks.slice().sort((a, b) => (isOverdue(b) ? 1 : 0) - (isOverdue(a) ? 1 : 0) ||
-      RANK[a.importance] - RANK[b.importance] || (a.due_date || '9999').localeCompare(b.due_date || '9999')).slice(0, 10);
+    // Active tasks = every open task, overdue first, then by importance, then due date
+    const MAX_ACTIVE = 12;
+    const activeTasks = openTasks.slice().sort((a, b) => (isOverdue(b) ? 1 : 0) - (isOverdue(a) ? 1 : 0) ||
+      RANK[a.importance] - RANK[b.importance] || (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+    const taskCard = (t) => {
+      const proj = t.project_id ? state.projects.find(p => p.id === t.project_id) : null;
+      const timing = !!state.running && state.running.task_id === t.id;
+      return h('div', { class: 'task-card imp-' + t.importance, 'data-task-id': t.id },
+        h('a', { class: 'tc-title', href: '#/task/' + t.id }, t.title),
+        h('div', { class: 'tc-proj' }, proj ? h('a', { href: '#/project/' + proj.id }, proj.name) : h('span', { class: 'muted' }, 'No project')),
+        h('div', { class: 'pill-row tight' }, badge(label(STATUSES, t.status), 's-' + t.status), impPill(t.importance),
+          t.due_date ? badge((isOverdue(t) ? 'Overdue ' : 'Due ') + t.due_date, isOverdue(t) ? 'overdue' : '') : null),
+        h('div', { class: 'actions' },
+          h('a', { class: 'btn small', href: '#/task/' + t.id }, 'Open'),
+          timing ? badge('Timing now', 's-in_progress') : btn('\u23F1 Start timer', () => startTimer(t.id), 'small'),
+          btn('+ Note', () => taskNoteForm(null, { task_id: t.id }), 'small'),
+          btn('+ Work log', () => workLogForm(null, { task_id: t.id }), 'small')));
+    };
 
     // ---- importance & urgency report
     const BUCKETS = [['overdue', 'Overdue', '239,68,68'], ['week', 'Next 7 days', '251,191,36'], ['later', 'Later', '45,212,191'], ['none', 'No date', '148,163,184']];
@@ -613,14 +629,15 @@
 
       h('section', null,
         h('div', { class: 'section-head' }, h('h2', null, 'Active projects'), h('a', { href: '#/projects' }, 'All projects ›')),
-        (stats.length || unassigned.length) ? h('div', { class: 'proj-grid' },
-          stats.map(x => projectCard(x.p.name, '#/project/' + x.p.id, x, () => taskForm(null, { project_id: x.p.id }))),
-          unassigned.length ? projectCard('No project', '#/tasks?project=none', { total: unassigned.length, done: unassigned.length - unassignedOpen, open: unassignedOpen, over: unassigned.filter(isOverdue).length }, () => taskForm(null, { project_id: '' })) : null)
+        stats.length ? h('div', { class: 'proj-grid' },
+          stats.map(x => projectCard(x.p.name, '#/project/' + x.p.id, x, () => taskForm(null, { project_id: x.p.id }))))
           : h('div', { class: 'panel empty' }, 'No active projects yet. Use “+ Project” above to create one.')),
 
-      h('section', null,
-        h('div', { class: 'section-head' }, h('h2', null, 'Needs your attention'), h('a', { href: '#/tasks' }, `All ${openTasks.length} open tasks ›`)),
-        h('div', { class: 'panel' }, taskTable(attention, true)))
+      h('section', { id: 'active-tasks' },
+        h('div', { class: 'section-head' }, h('h2', null, 'Active tasks'), h('a', { href: '#/tasks' }, `All ${openTasks.length} open tasks ›`)),
+        activeTasks.length ? h('div', { class: 'task-grid' }, activeTasks.slice(0, MAX_ACTIVE).map(taskCard))
+          : h('div', { class: 'panel empty' }, 'No open tasks. Use \u201C+ Task\u201D above to add one.'),
+        activeTasks.length > MAX_ACTIVE ? h('p', { class: 'muted small' }, `Showing the ${MAX_ACTIVE} most pressing of ${activeTasks.length}. `, h('a', { href: '#/tasks' }, 'See all')) : null)
     ];
   }
 
