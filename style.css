@@ -290,6 +290,22 @@ details.plan pre.prompt { max-height: none; }
 .draft-grid input, .draft-grid select { width: 100%; }
 pre.prompt { white-space: pre-wrap; background: rgba(3, 13, 26, .7); border: 1px solid var(--border); border-radius: 10px; padding: 12px; max-height: 260px; overflow: auto; font-size: .82rem; color: #cfe6ff; }
 
+/* ---------- global search ---------- */
+.gsearch { display: flex; align-items: center; gap: 0; position: relative; }
+.gsearch-icon { width: 15px; height: 15px; color: var(--muted); position: absolute; left: 11px; pointer-events: none; }
+.gsearch #global-search { width: 220px; padding: 7px 10px 7px 32px; border-radius: 999px; background: rgba(3, 13, 26, .55); transition: width .18s ease, border-color .18s ease; }
+.gsearch #global-search:focus { width: 280px; border-color: var(--teal2); }
+.gsearch #global-search::-webkit-search-cancel-button { filter: invert(1) brightness(2); opacity: .6; }
+#search-box { width: 100%; margin-bottom: 4px; }
+.search-section h2 { margin-bottom: 10px; }
+.search-section + .search-section { margin-top: 0; }
+.search-hit { display: block; color: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid transparent; margin: 0 -12px 2px; transition: background .12s, border-color .12s; }
+.search-hit:hover { background: rgba(45, 212, 191, .08); border-color: var(--border); text-decoration: none; }
+.search-hit + .search-hit { border-top: 1px solid var(--border); border-radius: 0; }
+.sh-title { font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.sh-body { color: var(--muted); font-size: .88rem; margin-top: 6px; overflow-wrap: anywhere; white-space: pre-wrap; }
+mark { background: rgba(45, 212, 191, .35); color: #eafffb; border-radius: 3px; padding: 0 2px; }
+
 /* ---------- motion ---------- */
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
@@ -306,4 +322,7 @@ pre.prompt { white-space: pre-wrap; background: rgba(3, 13, 26, .7); border: 1px
   .hero { padding: 16px; }
   .hero h1 { font-size: 1.6rem; }
   th:nth-child(n+4), td:nth-child(n+4) { white-space: nowrap; }
+  .gsearch { order: 1; width: 100%; }
+  .gsearch #global-search, .gsearch #global-search:focus { width: 100%; }
+  .spacer { flex-basis: 100%; height: 0; }
 }
