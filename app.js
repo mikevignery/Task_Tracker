@@ -318,6 +318,106 @@
     return t.due_date <= daysAgo(-7) ? 'week' : 'later';
   }
 
+  // ------------------------------------------------------------ global search
+  /** Fetches the rows that aren't kept in `state` (notes, logs, log notes), for search. */
+  async function fetchSearchData() {
+    const notes = must(await db.from('task_notes').select('*')) || [];
+    const logs = must(await db.from('work_logs').select('*')) || [];
+    const logNotes = must(await db.from('work_log_notes').select('*')) || [];
+    return { notes, logs, logNotes };
+  }
+  const matchesText = (haystack, q) => String(haystack || '').toLowerCase().includes(q.toLowerCase());
+  function snippet(text, q, radius) {
+    radius = radius || 60;
+    const t = String(text || '');
+    const idx = t.toLowerCase().indexOf(q.toLowerCase());
+    if (idx === -1) return t.length > radius * 2 ? t.slice(0, radius * 2) + '…' : t;
+    const start = Math.max(0, idx - radius), end = Math.min(t.length, idx + q.length + radius);
+    return (start > 0 ? '…' : '') + t.slice(start, end) + (end < t.length ? '…' : '');
+  }
+  /** Splits text into plain strings and <mark> elements around every match of q. */
+  function highlightNodes(text, q) {
+    const t = String(text || '');
+    if (!q) return [t];
+    const lower = t.toLowerCase(), ql = q.toLowerCase(), out = [];
+    let i = 0;
+    while (i <= t.length) {
+      const idx = lower.indexOf(ql, i);
+      if (idx === -1) { out.push(t.slice(i)); break; }
+      if (idx > i) out.push(t.slice(i, idx));
+      out.push(h('mark', null, t.slice(idx, idx + ql.length)));
+      i = idx + ql.length;
+    }
+    return out;
+  }
+  function searchHit(href, title, meta, bodyText, q) {
+    return h('a', { class: 'search-hit', href },
+      h('div', { class: 'sh-title' }, highlightNodes(title, q)),
+      meta ? h('div', { class: 'pill-row tight' }, meta) : null,
+      bodyText ? h('div', { class: 'sh-body' }, highlightNodes(snippet(bodyText, q), q)) : null);
+  }
+
+  async function viewSearch() {
+    const initialQ = (parseQuery().get('q') || '').trim();
+    const input = h('input', { type: 'search', id: 'search-box', placeholder: 'Search projects, tasks, notes and work logs…', 'aria-label': 'Search everything' });
+    input.value = initialQ;
+    const countsBox = h('div', { class: 'pill-row tight' });
+    const resultsBox = h('div', { id: 'search-results' });
+    const { notes, logs, logNotes } = await fetchSearchData();
+    const logTaskId = (workLogId) => { const l = logs.find(x => x.id === workLogId); return l ? l.task_id : null; };
+    const taskTitle = (id) => { const t = state.tasks.find(x => x.id === id); return t ? t.title : 'Task'; };
+
+    function run(q) {
+      history.replaceState(null, '', '#/search' + (q ? '?q=' + encodeURIComponent(q) : ''));
+      const gbox = document.getElementById('global-search');
+      if (gbox && gbox !== document.activeElement) gbox.value = q;
+      if (!q) {
+        countsBox.replaceChildren();
+        resultsBox.replaceChildren(h('div', { class: 'empty' }, 'Type to search every project, task, note and work log — any status, open or closed.'));
+        return;
+      }
+      const projHits = state.projects.filter(p => matchesText(p.name + ' ' + (p.description || ''), q));
+      const taskHits = state.tasks.filter(t => matchesText(t.title + ' ' + (t.description || ''), q));
+      const noteHits = notes.filter(n => matchesText(n.body, q));
+      const logHits = logs.filter(l => matchesText(l.summary, q));
+      const logNoteHits = logNotes.filter(n => matchesText(n.body, q));
+      const total = projHits.length + taskHits.length + noteHits.length + logHits.length + logNoteHits.length;
+
+      countsBox.replaceChildren(...[
+        badge(`${total} result${total === 1 ? '' : 's'}`, total ? 's-in_progress' : ''),
+        projHits.length ? badge(`${projHits.length} project${projHits.length === 1 ? '' : 's'}`) : null,
+        taskHits.length ? badge(`${taskHits.length} task${taskHits.length === 1 ? '' : 's'}`) : null,
+        noteHits.length ? badge(`${noteHits.length} task note${noteHits.length === 1 ? '' : 's'}`) : null,
+        logHits.length ? badge(`${logHits.length} work log${logHits.length === 1 ? '' : 's'}`) : null,
+        logNoteHits.length ? badge(`${logNoteHits.length} work log note${logNoteHits.length === 1 ? '' : 's'}`) : null
+      ].filter(Boolean));
+
+      if (!total) { resultsBox.replaceChildren(h('div', { class: 'empty' }, `No matches anywhere for “${q}”.`)); return; }
+
+      const section = (title, items) => items.length ? h('div', { class: 'card search-section' }, h('h2', null, `${title} (${items.length})`), items) : null;
+      const sections = [
+        section('Projects', projHits.map(p => searchHit('#/project/' + p.id, p.name,
+          [impPill(p.importance), badge(label(PROJECT_STATUSES, p.status), 'ps-' + p.status)], p.description, q))),
+        section('Tasks', taskHits.map(t => searchHit('#/task/' + t.id, t.title,
+          [badge(label(STATUSES, t.status), 's-' + t.status), impPill(t.importance),
+            t.project_id ? badge(projectName(t.project_id) || '') : badge('No project')], t.description, q))),
+        section('Task notes', noteHits.map(n => searchHit('#/task/' + n.task_id, taskTitle(n.task_id), [badge(fmtDT(n.created_at))], n.body, q))),
+        section('Work logs', logHits.map(l => searchHit('#/task/' + l.task_id, taskTitle(l.task_id) + ' · ' + l.work_date, [badge(fmtMin(l.minutes))], l.summary, q))),
+        section('Work log notes', logNoteHits.map(n => { const tid = logTaskId(n.work_log_id); return searchHit('#/task/' + tid, taskTitle(tid), [badge(fmtDT(n.created_at))], n.body, q); }))
+      ].filter(Boolean);
+      resultsBox.replaceChildren(...sections);
+    }
+
+    input.addEventListener('input', () => run(input.value.trim()));
+    run(initialQ);
+
+    return [
+      pageHead('Search', 'Finds a match anywhere in the tracker — any status, open or closed.'),
+      h('div', { class: 'card' }, input, countsBox),
+      resultsBox
+    ];
+  }
+
   function taskTable(tasks, showProject) {
     if (!tasks.length) return h('div', { class: 'empty' }, 'No tasks to show.');
     return h('div', { class: 'table-wrap' }, h('table', null,
@@ -669,32 +769,43 @@ If the task needs an email or message, outline it so I can write it in my own wo
 If a selected task needs no email, just say "No email needed" under it.
 
 PART 3 — Export for my task tracker (in the same reply as Part 2)
-After the task outlines and email outlines, finish with ONE JSON code block covering the same selected tasks, and nothing after it. Use exactly this shape:
+After the task outlines and email outlines, also give me the same selected tasks as a JSON file. If you can create a downloadable .json file, do that; otherwise finish your reply with ONE JSON code block and nothing after it. Use exactly this format:
 
 {
-  "meeting_title": "short title, or null",
+  "meeting_title": "short title for the meeting, or null",
   "meeting_date": "YYYY-MM-DD, or null",
   "tasks": [
     {
-      "title": "the task restated verb-first",
-      "importance": "high | medium | low",
-      "time_estimate": "e.g. 30 min",
-      "steps": ["step 1", "step 2"],
+      "title": "short verb-first task name, max 100 characters",
+      "description": "the task restated clearly in 1-2 sentences",
+      "importance": "high",
+      "time_estimate": "30-45 min",
+      "steps": [
+        "First concrete step",
+        "Second concrete step"
+      ],
       "depends_on": "what is needed first, or null",
-      "email": null,
+      "email": {
+        "to": "who it goes to",
+        "purpose": "one line on what the email should accomplish",
+        "points": [
+          "First point to cover",
+          "Second point to cover"
+        ]
+      },
       "due_date": null
     }
   ]
 }
 
 Rules for the JSON:
-- importance is the Priority you assigned in Part 2, in lowercase.
-- steps has one string per step, in order.
-- email is null when no email is needed; otherwise {"to": "...", "purpose": "...", "points": ["...", "..."]}.
-- due_date is a YYYY-MM-DD date only if the transcript states one (or it can be worked out from the meeting date); otherwise null.
+- importance is the Priority you gave in Part 2, in lowercase: "high", "medium" or "low".
+- steps has one string per step, in order, without numbering.
+- email is null when no email is needed.
+- due_date is YYYY-MM-DD only if the transcript states a date (or it can be worked out from the meeting date); otherwise null.
 - The JSON must be valid: double quotes, no comments, no trailing commas.`;
 
-  function parseImport(text) {
+  function parseJsonImport(text) {
     const raw = String(text || '');
     // Prefer fenced JSON blocks (last one first: the export comes at the end of the reply), then any {...} span.
     const tries = [];
@@ -734,6 +845,65 @@ Rules for the JSON:
       })
     };
   }
+  /** Reads Claude's plain-text "Task Outline / Follow-Up Email" reply (no JSON needed). */
+  function parseOutline(text) {
+    const clean = (l) => l.replace(/\*\*|__|`/g, '').replace(/^[#>\s]+/, '').replace(/^[-*•●◦]\s+/, '').trim();
+    const stripNum = (l) => l.replace(/^(?:\d+[.)]|[-*•])\s+/, '').trim();
+    const headerRe = /^Task\s+(\d+)\s*[:.\-–—)]\s*(.+)$/i;
+    const blocks = []; let cur = null;
+    const start = (title) => { cur = { header: title || '', restated: '', steps: [], priority: '', time: '', depends: '', email: null, noEmail: false, section: null, seen: false }; blocks.push(cur); };
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+      const line = clean(rawLine);
+      if (!line) continue;
+      const hm = line.match(headerRe);
+      if (hm) { start(hm[2].trim()); continue; }
+      if (/^Task\s*Outline\b/i.test(line)) { if (!cur || cur.seen) start(''); cur.section = null; continue; }
+      if (!cur) continue;
+      let m;
+      if ((m = line.match(/^Task\s*:\s*(.*)$/i))) { cur.restated = m[1].trim(); cur.section = 'task'; cur.seen = true; continue; }
+      if ((m = line.match(/^Steps?\s*:\s*(.*)$/i))) { cur.section = 'steps'; if (m[1]) cur.steps.push(stripNum(m[1])); cur.seen = true; continue; }
+      if ((m = line.match(/^Priority\s*:\s*(.*)$/i))) { cur.priority = m[1]; cur.section = null; cur.seen = true; continue; }
+      if ((m = line.match(/^Time(?:\s+to\s+complete)?\s*:\s*(.*)$/i))) { cur.time = m[1].trim(); cur.section = 'time'; cur.seen = true; continue; }
+      if ((m = line.match(/^Depends\s+on(?:\s*\/\s*need\s+first)?\s*:\s*(.*)$/i))) { cur.depends = m[1].trim(); cur.section = 'depends'; cur.seen = true; continue; }
+      if (/^Follow-?\s*Up\s+(?:Email|Message)\b/i.test(line)) { cur.email = cur.email || { to: '', purpose: '', points: [] }; cur.section = 'email'; cur.seen = true; continue; }
+      if (/^No\s+email\s+(?:needed|required)/i.test(line)) { cur.noEmail = true; cur.email = null; cur.section = null; continue; }
+      if (cur.email && ['email', 'points', 'to', 'purpose'].includes(cur.section)) {
+        if ((m = line.match(/^To\s*:\s*(.*)$/i))) { cur.email.to = m[1].trim(); cur.section = 'to'; continue; }
+        if ((m = line.match(/^Purpose\s*:\s*(.*)$/i))) { cur.email.purpose = m[1].trim(); cur.section = 'purpose'; continue; }
+        if ((m = line.match(/^Points\s+to\s+cover\s*:?\s*(.*)$/i))) { cur.section = 'points'; if (m[1]) cur.email.points.push(stripNum(m[1])); continue; }
+      }
+      // continuation lines belong to whichever section is open
+      if (cur.section === 'steps') cur.steps.push(stripNum(line));
+      else if (cur.section === 'points') cur.email.points.push(stripNum(line));
+      else if (cur.section === 'task') cur.restated += ' ' + line;
+      else if (cur.section === 'time') cur.time += ' ' + line;
+      else if (cur.section === 'depends') cur.depends += ' ' + line;
+      else if (cur.section === 'to') cur.email.to += ' ' + line;
+      else if (cur.section === 'purpose') cur.email.purpose += ' ' + line;
+    }
+    const none = (x) => (/^(nothing|none|n\/a|no|-)\.?$/i.test(x.trim()) ? '' : x.trim());
+    const tasks = blocks.filter(b => (b.header || b.restated) && (b.seen || b.steps.length)).map(b => {
+      const title = (b.header || b.restated).slice(0, 200);
+      const pr = b.priority.toLowerCase();
+      const email = b.email && !b.noEmail && (b.email.to || b.email.purpose || b.email.points.length)
+        ? { to: b.email.to.slice(0, 200), purpose: b.email.purpose.slice(0, 400), points: b.email.points.filter(Boolean).slice(0, 30) } : null;
+      return {
+        title, description: b.header && b.restated && b.restated.toLowerCase() !== b.header.toLowerCase() ? b.restated.slice(0, 2000) : '',
+        importance: /critical/.test(pr) ? 'critical' : /high/.test(pr) ? 'high' : /low/.test(pr) ? 'low' : 'medium',
+        due_date: '', owner: '', quote: '', time: b.time.slice(0, 80), steps: b.steps.filter(Boolean).slice(0, 30), dependsOn: none(b.depends).slice(0, 300), email
+      };
+    });
+    return { title: null, date: '', tasks };
+  }
+
+  function parseImport(text) {
+    let jsonErr = null;
+    try { return parseJsonImport(text); } catch (e) { jsonErr = e; }
+    const o = parseOutline(text);
+    if (o.tasks.length) return o;
+    throw jsonErr;
+  }
+
   const draftDescription = (d) => [d.description, d.time && `Estimated time: ${d.time}`, d.dependsOn && `Depends on: ${d.dependsOn}`].filter(Boolean).join('\n');
   const emailText = (e) => ['Follow-up email outline', e.to && `To: ${e.to}`, e.purpose && `Purpose: ${e.purpose}`,
     e.points.length && 'Points to cover:\n' + e.points.map(p => '• ' + p).join('\n')].filter(Boolean).join('\n');
@@ -750,9 +920,19 @@ Rules for the JSON:
 
   function viewImport() {
     const promptPre = h('pre', { class: 'prompt', id: 'prompt-text' }, PROMPT);
-    const jsonBox = h('textarea', { id: 'import-json', placeholder: 'Paste Claude’s reply here (the JSON block at the end is what gets imported)…', rows: 8 });
+    const jsonBox = h('textarea', { id: 'import-json', placeholder: 'Paste Claude’s whole reply here (the JSON block or the task outlines both work), or use Upload file…', rows: 8 });
     const draftsBox = h('div', { id: 'drafts' });
     const msg = h('div', { class: 'error', role: 'alert' });
+    const fileInput = h('input', { type: 'file', id: 'import-file', accept: '.json,.txt,.md,application/json,text/plain', hidden: true });
+    fileInput.addEventListener('change', () => {
+      const f = fileInput.files && fileInput.files[0]; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { jsonBox.value = String(rd.result || ''); toast(`Loaded ${f.name}. Click Preview drafts.`); fileInput.value = ''; };
+      rd.onerror = () => toast('Could not read that file.', true);
+      rd.readAsText(f);
+    });
+    const meetingName = h('input', { type: 'text', id: 'import-meeting', placeholder: 'Meeting name (optional)', 'aria-label': 'Meeting name' });
+    const meetingDate = h('input', { type: 'date', id: 'import-date', 'aria-label': 'Meeting date' });
     const defaultProject = h('select', { id: 'import-project', 'aria-label': 'Default project' });
     fillSelect(defaultProject, projectOptions(), '');
 
@@ -774,7 +954,10 @@ Rules for the JSON:
       msg.textContent = '';
       let parsed;
       try { parsed = parseImport(jsonBox.value); } catch (e) { msg.textContent = e.message; draftsBox.replaceChildren(); return; }
-      if (!parsed.tasks.length) { draftsBox.replaceChildren(h('div', { class: 'empty' }, 'No tasks found in that JSON.')); return; }
+      // what you type here wins over whatever Claude guessed
+      if (meetingName.value.trim()) parsed.title = meetingName.value.trim();
+      if (meetingDate.value) parsed.date = meetingDate.value;
+      if (!parsed.tasks.length) { draftsBox.replaceChildren(h('div', { class: 'empty' }, 'No tasks found in that reply.')); return; }
       const rows = parsed.tasks.map((d, i) => {
         const inc = h('input', { type: 'checkbox', checked: true, 'aria-label': 'include' });
         const title = h('input', { type: 'text', value: d.title, 'aria-label': 'title', style: 'width:100%' });
@@ -826,10 +1009,11 @@ Rules for the JSON:
         h('details', { class: 'plan' }, h('summary', null, 'Show the prompt'), promptPre)),
       h('div', { class: 'card' },
         h('h2', null, '2. Reply with the numbers you want'),
-        h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Claude sends back a plan and email outline for each one, followed by a JSON block for this tracker.')),
+        h('p', { class: 'muted small', style: 'margin:6px 0 0' }, 'Claude sends back a task outline and email outline for each one, plus the same tasks as a JSON file (or a JSON block at the end of the reply).')),
       h('div', { class: 'card' },
-        h('h2', null, '3. Paste Claude’s reply here'), jsonBox,
-        h('div', { class: 'filters', style: 'margin-top:8px' },
+        h('div', { class: 'card-head' }, h('h2', { class: 'grow' }, '3. Paste Claude’s reply, or upload the .json file'), fileInput, btn('Upload file', () => fileInput.click(), 'small')), jsonBox,
+        h('div', { class: 'filters', style: 'margin-top:8px' }, meetingName, meetingDate),
+        h('div', { class: 'filters' },
           h('label', { for: 'import-project', class: 'muted small', style: 'align-self:center' }, 'Default project for all drafts:'), defaultProject,
           btn('Preview drafts', showDrafts, 'primary')), msg),
       draftsBox
@@ -884,6 +1068,8 @@ Rules for the JSON:
     document.getElementById('user-email').textContent = state.user.email || '';
     const [name, id] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
     document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === (name === 'project' ? 'projects' : name === 'task' ? 'tasks' : (name || 'dashboard'))));
+    const gbox = document.getElementById('global-search');
+    if (gbox && document.activeElement !== gbox) gbox.value = name === 'search' ? (parseQuery().get('q') || '') : '';
     let out;
     try {
       if (name === 'tasks') out = viewTasks();
@@ -891,6 +1077,7 @@ Rules for the JSON:
       else if (name === 'project') out = viewProject(id);
       else if (name === 'task') out = await viewTask(id);
       else if (name === 'import') out = viewImport();
+      else if (name === 'search') out = await viewSearch();
       else out = await viewDashboard();
     } catch (e) { out = h('div', { class: 'card' }, h('p', { class: 'error' }, e.message || String(e))); }
     if (seq !== renderSeq) return;            // a newer render superseded this one
@@ -909,6 +1096,13 @@ Rules for the JSON:
   async function boot() {
     document.getElementById('signout').addEventListener('click', () => db && db.auth.signOut());
     document.getElementById('timer-stop').addEventListener('click', () => guard(stopTimer));
+    const gform = document.getElementById('global-search-form');
+    if (gform) gform.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const v = document.getElementById('global-search').value.trim();
+      const target = '#/search' + (v ? '?q=' + encodeURIComponent(v) : '');
+      if (location.hash === target) render(); else location.hash = target;
+    });
     window.addEventListener('hashchange', render);
     if (!db && configured) { await ensureLibrary(); makeClient(); }
     if (!db) { render(); return; }
