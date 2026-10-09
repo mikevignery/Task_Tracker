@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Task Tracker</title>
-  <link rel="stylesheet" href="style.css?v=9">
+  <link rel="stylesheet" href="style.css?v=10">
 </head>
 <body>
   <header class="topbar" id="topbar" hidden>
@@ -14,8 +14,13 @@
       <a href="#/projects" data-nav="projects">Projects</a>
       <a href="#/tasks" data-nav="tasks">Tasks</a>
       <a href="#/import" data-nav="import">Import transcript</a>
+      <a href="#/search" data-nav="search">Search</a>
     </nav>
     <div class="spacer"></div>
+    <form id="global-search-form" class="gsearch" role="search">
+      <svg class="gsearch-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="9" cy="9" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><line x1="13.6" y1="13.6" x2="18" y2="18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <input type="search" id="global-search" placeholder="Search everything…" aria-label="Search everything">
+    </form>
     <div id="timer" class="timer" hidden>
       <a id="timer-link" href="#/tasks"></a>
       <span id="timer-clock">00:00:00</span>
@@ -36,6 +41,6 @@
   <!-- 2. Supabase client library -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <!-- 3. The app -->
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>
