@@ -549,7 +549,7 @@
   function donut(segments, total) {
     const R = 54, C = 2 * Math.PI * R;
     const svg = s('svg', { viewBox: '0 0 140 140', class: 'donut', role: 'img', 'aria-label': 'Tasks by status: ' + segments.map(g => `${g.label} ${g.value}`).join(', ') },
-      s('circle', { cx: 70, cy: 70, r: R, fill: 'none', stroke: 'rgba(255,255,255,.08)', 'stroke-width': 16 }));
+      s('circle', { cx: 70, cy: 70, r: R, fill: 'none', class: 'donut-track', 'stroke-width': 16 }));
     let off = 0;
     for (const g of segments) {
       if (!g.value || !total) continue;
@@ -1030,9 +1030,10 @@ Rules for the JSON:
   async function render() {
     const seq = ++renderSeq;
     const topbar = document.getElementById('topbar');
-    if (!db) { topbar.hidden = true; $app.replaceChildren(viewSetup()); return; }
-    if (!state.user) { topbar.hidden = true; $app.replaceChildren(viewAuth()); return; }
-    topbar.hidden = false;
+    const sidebar = document.getElementById('sidebar');
+    if (!db) { topbar.hidden = true; sidebar.hidden = true; $app.replaceChildren(viewSetup()); return; }
+    if (!state.user) { topbar.hidden = true; sidebar.hidden = true; $app.replaceChildren(viewAuth()); return; }
+    topbar.hidden = false; sidebar.hidden = false;
     document.getElementById('user-email').textContent = state.user.email || '';
     const [name, id] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
     document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === (name === 'project' ? 'projects' : name === 'task' ? 'tasks' : (name || 'dashboard'))));
@@ -1052,6 +1053,30 @@ Rules for the JSON:
     $app.replaceChildren(...[].concat(out));
   }
 
+  // ----------------------------------------------------------------- theme
+  function applyTheme(mode) {
+    document.documentElement.setAttribute('data-theme', mode);
+    document.documentElement.style.colorScheme = mode;
+    const sun = document.getElementById('icon-sun'), moon = document.getElementById('icon-moon'), label = document.getElementById('theme-toggle-label');
+    // SVG elements don't reflect the `hidden` IDL property to the attribute like HTML elements do,
+    // so toggle the content attribute directly.
+    const setHidden = (el, isHidden) => { if (!el) return; if (isHidden) el.setAttribute('hidden', ''); else el.removeAttribute('hidden'); };
+    setHidden(sun, mode !== 'dark');
+    setHidden(moon, mode !== 'light');
+    if (label) label.textContent = mode === 'dark' ? 'Light mode' : 'Dark mode';
+  }
+  function initTheme() {
+    let mode = 'dark';
+    try { mode = localStorage.getItem('tt-theme') || 'dark'; } catch (e) {}
+    applyTheme(mode);
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.addEventListener('click', () => {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      try { localStorage.setItem('tt-theme', next); } catch (e) {}
+      applyTheme(next);
+    });
+  }
+
   // ------------------------------------------------------------------ boot
   async function applySession(session) {
     const user = session && session.user ? session.user : null;
@@ -1062,6 +1087,7 @@ Rules for the JSON:
     render();
   }
   async function boot() {
+    initTheme();
     document.getElementById('signout').addEventListener('click', () => db && db.auth.signOut());
     document.getElementById('timer-stop').addEventListener('click', () => guard(stopTimer));
     const gform = document.getElementById('global-search-form');
