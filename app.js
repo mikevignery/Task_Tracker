@@ -38,7 +38,6 @@
   const STATUSES = [['todo', 'To do'], ['in_progress', 'In progress'], ['blocked', 'Blocked'], ['done', 'Done']];
   const IMPORTANCE = [['critical', 'Critical'], ['high', 'High'], ['medium', 'Medium'], ['low', 'Low']];
   const RANK = { critical: 0, high: 1, medium: 2, low: 3 };
-  const IMP_COLORS = { critical: '#e879f9', high: '#fb923c', medium: '#38bdf8', low: '#94a3b8' };
   const impPill = (v) => badge(label(IMPORTANCE, v), 'p-' + v);
   const PROJECT_STATUSES = [['active', 'Active'], ['on_hold', 'On hold'], ['done', 'Done'], ['archived', 'Archived']];
   const label = (list, v) => (list.find(x => x[0] === v) || [v, v])[1];
@@ -67,7 +66,7 @@
   const today = () => ymd(new Date());
   const daysAgo = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); };
   // Chart / pill colours (mirrored in style.css)
-  const COLORS = { todo: '#38bdf8', in_progress: '#2dd4bf', blocked: '#fbbf24', done: '#4ade80' };
+  const COLORS = { todo: '#7c93b3', in_progress: '#8b7bf5', blocked: '#f2a93c', done: '#3ecf8e' };
   const SVG_NS = 'http://www.w3.org/2000/svg';
   function s(tag, props, ...kids) {
     const el = document.createElementNS(SVG_NS, tag);
@@ -547,13 +546,10 @@
   }
 
   // ------------------------------------------------------------- dashboard
-  function grad(id, c1, c2) {
-    return s('linearGradient', { id, x1: 0, y1: 0, x2: 0, y2: 1 }, s('stop', { offset: '0%', 'stop-color': c1 }), s('stop', { offset: '100%', 'stop-color': c2 }));
-  }
   function donut(segments, total) {
     const R = 54, C = 2 * Math.PI * R;
     const svg = s('svg', { viewBox: '0 0 140 140', class: 'donut', role: 'img', 'aria-label': 'Tasks by status: ' + segments.map(g => `${g.label} ${g.value}`).join(', ') },
-      s('circle', { cx: 70, cy: 70, r: R, fill: 'none', stroke: 'rgba(148,197,255,.14)', 'stroke-width': 16 }));
+      s('circle', { cx: 70, cy: 70, r: R, fill: 'none', stroke: 'rgba(255,255,255,.08)', 'stroke-width': 16 }));
     let off = 0;
     for (const g of segments) {
       if (!g.value || !total) continue;
@@ -565,43 +561,13 @@
     svg.appendChild(s('text', { x: 70, y: 88, 'text-anchor': 'middle', class: 'donut-sub' }, total === 1 ? 'task' : 'tasks'));
     return svg;
   }
-  function hoursChart(days) {
-    const W = 600, H = 230, L = 34, Rr = 8, T = 22, B = 36;
-    const maxH = Math.max(1, Math.ceil(Math.max(...days.map(d => d.minutes)) / 60));
-    const iw = W - L - Rr, ih = H - T - B, slot = iw / days.length, bw = slot * 0.62;
-    const yOf = (hrs) => T + ih - (hrs / maxH) * ih;
-    const svg = s('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img',
-      'aria-label': 'Hours logged per day over the last 14 days: ' + days.map(d => `${d.date} ${fmtMin(d.minutes)}`).join(', ') },
-      s('defs', null, grad('gBar', '#2dd4bf', '#1d4ed8'), grad('gToday', '#a5f3fc', '#14b8a6')));
-    for (const v of [0, maxH / 2, maxH]) {
-      svg.appendChild(s('line', { x1: L, x2: W - Rr, y1: yOf(v), y2: yOf(v), class: 'grid' }));
-      svg.appendChild(s('text', { x: L - 6, y: yOf(v) + 3.5, 'text-anchor': 'end', class: 'axis' }, `${v}h`));
-    }
-    days.forEach((d, i) => {
-      const hrs = d.minutes / 60, x = L + i * slot + (slot - bw) / 2;
-      const hgt = d.minutes > 0 ? Math.max(3, (hrs / maxH) * ih) : 0;
-      if (hgt) {
-        svg.appendChild(s('rect', { x, y: T + ih - hgt, width: bw, height: hgt, rx: 4, class: 'bar', style: `animation-delay:${i * 35}ms`,
-          fill: i === days.length - 1 ? 'url(#gToday)' : 'url(#gBar)' }, s('title', null, `${d.date}: ${fmtMin(d.minutes)}`)));
-        svg.appendChild(s('text', { x: x + bw / 2, y: T + ih - hgt - 5, 'text-anchor': 'middle', class: 'val' }, hrs >= 10 ? Math.round(hrs) : hrs.toFixed(1)));
-      }
-      const dt = new Date(d.date + 'T00:00:00');
-      svg.appendChild(s('text', { x: x + bw / 2, y: H - 20, 'text-anchor': 'middle', class: 'axis' + (i === days.length - 1 ? ' today' : '') }, 'SMTWTFS'[dt.getDay()]));
-      svg.appendChild(s('text', { x: x + bw / 2, y: H - 7, 'text-anchor': 'middle', class: 'axis' + (i === days.length - 1 ? ' today' : '') }, String(dt.getDate())));
-    });
-    if (days.every(d => d.minutes === 0)) svg.appendChild(s('text', { x: W / 2, y: T + ih / 2, 'text-anchor': 'middle', class: 'axis empty-msg' }, 'No time logged yet – start a timer or add a work log'));
-    return svg;
-  }
-
   async function viewDashboard() {
-    const logs = must(await db.from('work_logs').select('id,task_id,work_date,minutes,timer_started_at,created_at').gte('work_date', daysAgo(13))) || [];
+    // Only needed now to default the "+ Work log note" quick-create to the most recently worked-on log.
+    const logs = must(await db.from('work_logs').select('id,task_id,work_date,minutes,timer_started_at,created_at')) || [];
     const openTasks = state.tasks.filter(t => t.status !== 'done');
     const overdue = openTasks.filter(isOverdue);
-    const weekMin = logs.filter(l => l.work_date >= daysAgo(6)).reduce((a, l) => a + (l.minutes || 0), 0);
     const doneWeek = state.tasks.filter(t => t.status === 'done' && Date.now() - new Date(t.updated_at).getTime() < 7 * 864e5).length;
     const activeProjects = state.projects.filter(p => p.status === 'active');
-    const days = [];
-    for (let i = 13; i >= 0; i--) { const date = daysAgo(i); days.push({ date, minutes: logs.filter(l => l.work_date === date).reduce((a, l) => a + (l.minutes || 0), 0) }); }
     const statusCounts = STATUSES.map(([k, l]) => ({ key: k, label: l, color: COLORS[k], value: state.tasks.filter(t => t.status === k).length }));
 
     const hr = new Date().getHours();
@@ -658,7 +624,7 @@
     };
 
     // ---- importance & urgency report
-    const BUCKETS = [['overdue', 'Overdue', '239,68,68'], ['week', 'Next 7 days', '251,191,36'], ['later', 'Later', '45,212,191'], ['none', 'No date', '148,163,184']];
+    const BUCKETS = [['overdue', 'Overdue', '239,83,80'], ['week', 'Next 7 days', '242,169,60'], ['later', 'Later', '91,141,239'], ['none', 'No date', '139,143,152']];
     const cellN = (imp, b) => openTasks.filter(t => t.importance === imp && dueBucket(t) === b).length;
     const maxCell = Math.max(1, ...IMPORTANCE.flatMap(([k]) => BUCKETS.map(([b]) => cellN(k, b))));
     const critHigh = openTasks.filter(t => t.importance === 'critical' || t.importance === 'high');
@@ -685,11 +651,14 @@
         : h('span', { class: 'pi-track muted small' }, 'no open tasks'),
       h('b', null, r.ts.length))) : h('div', { class: 'empty' }, 'No open work.'));
 
+    const dateStr = new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+    const heroLine = overdue.length
+      ? `It's ${dateStr}. You have ${openTasks.length} open task${openTasks.length === 1 ? '' : 's'}, ${overdue.length} of them overdue.`
+      : `It's ${dateStr}. You have ${openTasks.length} open task${openTasks.length === 1 ? '' : 's'} and nothing overdue.`;
+
     return [
       h('section', { class: 'hero' },
-        h('div', null, h('h1', null, greeting), h('div', { class: 'hero-sub' },
-          new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }), ' • ',
-          `${openTasks.length} open task${openTasks.length === 1 ? '' : 's'}`, overdue.length ? `, ${overdue.length} overdue` : '')),
+        h('div', null, h('h1', null, greeting), h('div', { class: 'hero-sub' }, heroLine)),
         h('div', { class: 'quick', id: 'quick-create' },
           btn('+ Project', () => projectForm(null), 'primary'),
           btn('+ Task', () => taskForm(null, { project_id: '' }), 'primary'),
@@ -701,19 +670,7 @@
         tile(activeProjects.length, 'Active projects', `${state.projects.length} total`, 'k-teal', '#/projects'),
         tile(openTasks.length, 'Open tasks', `${state.tasks.length} all-time`, 'k-blue', '#/tasks'),
         tile(overdue.length, 'Overdue', overdue.length ? 'Needs attention' : 'All caught up', 'k-red', '#/tasks?status=overdue'),
-        tile(doneWeek, 'Done this week', 'last 7 days', 'k-green', '#/tasks?status=done'),
-        tile(fmtMin(weekMin), 'Time this week', 'last 7 days', 'k-cyan')),
-
-      h('section', { class: 'charts' },
-        h('div', { class: 'panel' }, h('h2', null, 'Tasks by status'),
-          h('div', { class: 'donut-wrap' }, donut(statusCounts, state.tasks.length),
-            h('ul', { class: 'legend' }, statusCounts.map(g => h('li', null, badge(g.label, 's-' + g.key), h('b', null, g.value)))))),
-        h('div', { class: 'panel wide' }, h('h2', null, 'Hours logged · last 14 days'), hoursChart(days)),
-        h('div', { class: 'panel' }, h('h2', null, 'Open work by project'),
-          top.length ? h('div', { class: 'hbars' }, top.map((x, i) => h('a', { class: 'hrow c' + (i % 6), href: x.href },
-            h('span', { class: 'hname' }, x.name), h('span', { class: 'htrack' }, h('span', { class: 'hfill', style: `width:${Math.max(6, x.n / maxLoad * 100)}%` })), h('b', null, x.n))))
-            : h('div', { class: 'empty' }, 'Nothing open. Nice.'),
-          h('div', { class: 'pill-row' }, prio))),
+        tile(doneWeek, 'Done this week', 'last 7 days', 'k-green', '#/tasks?status=done')),
 
       h('section', { id: 'urgency-report' },
         h('div', { class: 'section-head' }, h('h2', null, 'Importance & urgency report'),
@@ -737,7 +694,18 @@
         h('div', { class: 'section-head' }, h('h2', null, 'Active tasks'), h('a', { href: '#/tasks' }, `All ${openTasks.length} open tasks ›`)),
         activeTasks.length ? h('div', { class: 'task-grid' }, activeTasks.slice(0, MAX_ACTIVE).map(taskCard))
           : h('div', { class: 'panel empty' }, 'No open tasks. Use \u201C+ Task\u201D above to add one.'),
-        activeTasks.length > MAX_ACTIVE ? h('p', { class: 'muted small' }, `Showing the ${MAX_ACTIVE} most pressing of ${activeTasks.length}. `, h('a', { href: '#/tasks' }, 'See all')) : null)
+        activeTasks.length > MAX_ACTIVE ? h('p', { class: 'muted small' }, `Showing the ${MAX_ACTIVE} most pressing of ${activeTasks.length}. `, h('a', { href: '#/tasks' }, 'See all')) : null),
+
+      h('section', { class: 'charts' },
+        h('div', { class: 'section-head' }, h('h2', null, 'Overview')),
+        h('div', { class: 'panel' }, h('h2', null, 'Tasks by status'),
+          h('div', { class: 'donut-wrap' }, donut(statusCounts, state.tasks.length),
+            h('ul', { class: 'legend' }, statusCounts.map(g => h('li', null, badge(g.label, 's-' + g.key), h('b', null, g.value)))))),
+        h('div', { class: 'panel' }, h('h2', null, 'Open work by project'),
+          top.length ? h('div', { class: 'hbars' }, top.map(x => h('a', { class: 'hrow', href: x.href },
+            h('span', { class: 'hname' }, x.name), h('span', { class: 'htrack' }, h('span', { class: 'hfill', style: `width:${Math.max(6, x.n / maxLoad * 100)}%` })), h('b', null, x.n))))
+            : h('div', { class: 'empty' }, 'Nothing open. Nice.'),
+          h('div', { class: 'pill-row' }, prio)))
     ];
   }
 
